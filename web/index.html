@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rotom Dex Lab</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>⚡ Rotom Dex Lab</h1>
+      <p>Oi, Davi! Aqui você testa sua placa ESP32 com segurança, em português e sem precisar escrever código.</p>
+    </div>
+    <button id="healthBtn">Começar</button>
+  </header>
+
+  <main>
+    <section class="card status">
+      <h2>1. Escolha a placa</h2>
+      <p class="hint">Conecte a ESP32 no cabo USB. Se só tiver uma placa, eu escolho sozinho.</p>
+      <div id="deviceStatus" class="big-status">Clique em “Procurar minha placa”.</div>
+      <label id="deviceSelectLabel" class="hidden">Placa conectada
+        <select id="deviceSelect"></select>
+      </label>
+      <input id="portInput" type="hidden" />
+      <div class="actions">
+        <button id="boardsBtn">🔎 Procurar minha placa</button>
+        <button id="compileBtn">🧪 Testar código</button>
+        <button id="uploadBtn" class="danger">🚀 Enviar para a placa</button>
+      </div>
+      <details>
+        <summary>Detalhes para o papai</summary>
+        <pre id="statusBox">Clique em começar.</pre>
+      </details>
+    </section>
+
+    <section class="card chat">
+      <h2>2. Converse com o Rotom Dex</h2>
+      <p class="hint">Pode escrever como você fala. Ex: “Rotom, testa meu projeto”.</p>
+      <div id="chatLog" class="chat-log"></div>
+      <form id="chatForm">
+        <input id="chatInput" placeholder="Digite sua missão aqui" autocomplete="off" />
+        <button>Enviar</button>
+      </form>
+      <div id="suggestedActions"></div>
+    </section>
+
+    <section class="card serial">
+      <h2>3. Ver mensagens da placa</h2>
+      <p class="hint">Use isto para ver o que a ESP32 está contando.</p>
+      <div class="actions">
+        <button id="serialOpenBtn">👀 Abrir monitor</button>
+        <button id="serialCloseBtn">Fechar monitor</button>
+      </div>
+      <pre id="serialBox"></pre>
+    </section>
+
+    <section class="card missions">
+      <h2>Missões do Davi</h2>
+      <ul>
+        <li>✅ Relógio RTC no display</li>
+        <li>✅ Previsão do tempo</li>
+        <li>✅ Fase da lua</li>
+        <li>🟡 Menu do despertador</li>
+        <li>⬜ Teste motor esquerdo com rodas suspensas</li>
+        <li>⬜ Teste motor direito com rodas suspensas</li>
+        <li>⬜ Controle diferencial com joystick Bluetooth</li>
+        <li>⬜ Modo Rotom Dex no robô</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

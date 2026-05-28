@@ -1,0 +1,18 @@
+{
+  "defaultProjectId": "davibot",
+  "projects": [
+    {
+      "id": "davibot",
+      "name": "DaviBot",
+      "root": "C:/Users/Davi/Documents/DaviBot",
+      "sketch": "DaviBot.ino",
+      "allowedFqbns": [
+        "esp32:esp32:esp32",
+        "esp32:esp32:esp32dev",
+        "esp32:esp32:esp32doit-devkit-v1"
+      ],
+      "defaultFqbn": "esp32:esp32:esp32",
+      "defaultBaud": 115200
+    }
+  ]
+}
