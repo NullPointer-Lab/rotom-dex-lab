@@ -16,93 +16,103 @@
   </header>
 
   <main>
-    <section class="card status">
-      <h2>1. Escolha a placa</h2>
-      <p class="hint">Conecte a ESP32 no cabo USB. Se só tiver uma placa, eu escolho sozinho.</p>
-      <div id="deviceStatus" class="big-status">Clique em “Procurar minha placa”.</div>
-      <label id="deviceSelectLabel" class="hidden">Placa conectada
-        <select id="deviceSelect"></select>
-      </label>
-      <input id="portInput" type="hidden" />
-      <div class="actions">
-        <button id="boardsBtn">🔎 Procurar minha placa</button>
-        <button id="diagnosticsBtn">🛠️ Diagnóstico do papai</button>
-        <button id="compileBtn">🧪 Testar código</button>
-        <button id="uploadBtn" class="danger">🚀 Enviar para a placa</button>
-      </div>
-      <details>
-        <summary>Detalhes para o papai</summary>
-        <pre id="statusBox">Clique em começar.</pre>
-      </details>
-    </section>
+    <div class="primary">
+      <section class="card guide">
+        <h2>🎯 Missão de hoje</h2>
+        <div id="currentMission" class="big-status">Carregando missões…</div>
+        <p class="hint">Próximo passo:</p>
+        <div id="nextStep" class="next-step">Clique em “Começar” para eu procurar sua placa.</div>
+      </section>
 
-    <section class="card chat">
-      <h2>2. Converse com o Rotom Dex
-        <span id="chatStatus" class="badge"></span>
-        <button type="button" id="chatClearBtn" class="mini" title="Começar uma conversa nova">🧹 Limpar</button>
-      </h2>
-      <p class="hint">Pode escrever como você fala. Ex: “Rotom, testa meu projeto”.</p>
-      <div id="chatLog" class="chat-log"></div>
-      <div id="imagePreview" class="image-preview hidden">
-        <img id="imageThumb" alt="prévia da imagem" />
-        <span id="imageName" class="image-name"></span>
-        <button type="button" id="imageRemoveBtn" class="mini" title="Tirar a imagem">✕</button>
-      </div>
-      <form id="chatForm">
-        <button type="button" id="imageAttachBtn" title="Anexar uma foto ou print">📎</button>
-        <input id="chatInput" placeholder="Escreva ou cole uma foto (Ctrl+V)" autocomplete="off" />
-        <button>Enviar</button>
-      </form>
-      <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
-      <p class="hint">Dica: você pode colar (Ctrl+V) ou arrastar uma foto/print para o Rotom ver.</p>
-      <div id="suggestedActions"></div>
-    </section>
+      <section class="card chat">
+        <h2>💬 Converse com o Rotom Dex
+          <span id="chatStatus" class="badge"></span>
+          <button type="button" id="chatClearBtn" class="mini" title="Começar uma conversa nova">🧹 Limpar</button>
+        </h2>
+        <p class="hint">Pode escrever como você fala. Ex: “Rotom, testa meu projeto”. Pode colar foto!</p>
+        <div id="chatLog" class="chat-log"></div>
+        <div id="imagePreview" class="image-preview hidden">
+          <img id="imageThumb" alt="prévia da imagem" />
+          <span id="imageName" class="image-name"></span>
+          <button type="button" id="imageRemoveBtn" class="mini" title="Tirar a imagem">✕</button>
+        </div>
+        <form id="chatForm">
+          <button type="button" id="imageAttachBtn" title="Anexar uma foto ou print">📎</button>
+          <input id="chatInput" placeholder="Escreva ou cole uma foto (Ctrl+V)" autocomplete="off" />
+          <button>Enviar</button>
+        </form>
+        <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+        <div id="suggestedActions"></div>
+      </section>
+    </div>
 
-    <section class="card serial">
-      <h2>3. Ver mensagens da placa
-        <span id="serialMode" class="badge"></span>
-      </h2>
-      <p class="hint">Use isto para ver o que a ESP32 está contando.</p>
-      <label>Velocidade (baud)
-        <select id="baudSelect">
-          <option value="115200">115200</option>
-          <option value="9600">9600</option>
-          <option value="57600">57600</option>
-          <option value="74880">74880</option>
-        </select>
-      </label>
-      <div class="serial-send">
-        <input id="serialInput" placeholder="Mensagem para enviar pela serial" autocomplete="off" />
-        <button id="serialSendBtn">Enviar serial</button>
-      </div>
-      <div class="actions">
-        <button id="serialOpenBtn">👀 Abrir monitor</button>
-        <button id="serialClearBtn">Limpar serial</button>
-        <button id="serialCloseBtn">Fechar monitor</button>
-      </div>
-      <pre id="serialBox"></pre>
-    </section>
+    <aside class="secondary">
+      <section class="card status">
+        <h2>🔌 Sua placa</h2>
+        <p class="hint">Conecte a ESP32 no cabo USB. Se só tiver uma placa, eu escolho sozinho.</p>
+        <div id="deviceStatus" class="big-status">Clique em “Procurar minha placa”.</div>
+        <label id="deviceSelectLabel" class="hidden">Placa conectada
+          <select id="deviceSelect"></select>
+        </label>
+        <input id="portInput" type="hidden" />
+        <div class="actions">
+          <button id="boardsBtn">🔎 Procurar minha placa</button>
+          <button id="diagnosticsBtn">🛠️ Diagnóstico do papai</button>
+          <button id="compileBtn">🧪 Testar código</button>
+          <button id="uploadBtn" class="danger">🚀 Enviar para a placa</button>
+        </div>
+        <details>
+          <summary>Detalhes para o papai</summary>
+          <pre id="statusBox">Clique em começar.</pre>
+        </details>
+      </section>
 
-    <section class="card missions">
-      <h2>Missões do Davi</h2>
-      <p class="hint">Clique em uma missão para marcar como próxima, feita ou a fazer.</p>
-      <ul id="missionList">
-        <li>✅ Relógio RTC no display</li>
-        <li>✅ Previsão do tempo</li>
-        <li>✅ Fase da lua</li>
-        <li>🟡 Menu do despertador</li>
-        <li>⬜ Teste motor esquerdo com rodas suspensas</li>
-        <li>⬜ Teste motor direito com rodas suspensas</li>
-        <li>⬜ Controle diferencial com joystick Bluetooth</li>
-        <li>⬜ Modo Rotom Dex no robô</li>
-      </ul>
-    </section>
+      <section class="card serial">
+        <h2>👀 Mensagens da placa
+          <span id="serialMode" class="badge"></span>
+        </h2>
+        <p class="hint">Use isto para ver o que a ESP32 está contando.</p>
+        <label>Velocidade (baud)
+          <select id="baudSelect">
+            <option value="115200">115200</option>
+            <option value="9600">9600</option>
+            <option value="57600">57600</option>
+            <option value="74880">74880</option>
+          </select>
+        </label>
+        <div class="serial-send">
+          <input id="serialInput" placeholder="Mensagem para enviar pela serial" autocomplete="off" />
+          <button id="serialSendBtn">Enviar serial</button>
+        </div>
+        <div class="actions">
+          <button id="serialOpenBtn">👀 Abrir monitor</button>
+          <button id="serialClearBtn">Limpar serial</button>
+          <button id="serialCloseBtn">Fechar monitor</button>
+        </div>
+        <pre id="serialBox"></pre>
+      </section>
 
-    <section class="card templates">
-      <h2>Templates seguros</h2>
-      <p class="hint">Crie sketches pequenos para testar hardware com cuidado. A criação pede confirmação.</p>
-      <div id="templateList" class="template-list"></div>
-    </section>
+      <section class="card missions">
+        <h2>🏆 Missões do Davi</h2>
+        <p class="hint">Clique em uma missão para marcar como próxima, feita ou a fazer.</p>
+        <ul id="missionList">
+          <li>✅ Relógio RTC no display</li>
+          <li>✅ Previsão do tempo</li>
+          <li>✅ Fase da lua</li>
+          <li>🟡 Menu do despertador</li>
+          <li>⬜ Teste motor esquerdo com rodas suspensas</li>
+          <li>⬜ Teste motor direito com rodas suspensas</li>
+          <li>⬜ Controle diferencial com joystick Bluetooth</li>
+          <li>⬜ Modo Rotom Dex no robô</li>
+        </ul>
+      </section>
+
+      <section class="card templates">
+        <h2>🧩 Templates seguros</h2>
+        <p class="hint">Crie sketches pequenos para testar hardware com cuidado. A criação pede confirmação.</p>
+        <div id="templateList" class="template-list"></div>
+      </section>
+    </aside>
   </main>
 
   <script src="/static/app.js"></script>

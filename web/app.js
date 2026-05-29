@@ -33,6 +33,7 @@ let serialSessionId = null;
 let lastResult = null;
 let boardChoices = null;
 let pendingImage = null; // { dataUrl, name }
+let missionsState = [];
 
 const MISSION_ICON = { done: '✅', doing: '🟡', todo: '⬜' };
 
@@ -164,6 +165,7 @@ async function showResult(title, promise, action) {
     if (action) {
       lastResult = { action, ok: data.ok, message, stdout: data.stdout, stderr: data.stderr };
       appendCard(message, data);
+      updateGuide();
     }
     return data;
   } catch (err) {
@@ -175,6 +177,7 @@ async function showResult(title, promise, action) {
 function selectPort(port) {
   portInput.value = port || '';
   if (port) localStorage.setItem('rotomDexLastPort', port);
+  updateGuide();
 }
 
 function renderDevices(data) {
@@ -449,10 +452,37 @@ chatForm.onsubmit = async (event) => {
   }
 };
 
+function currentMissionText() {
+  const focus = missionsState.find((m) => m.status === 'doing') || missionsState.find((m) => m.status === 'todo');
+  if (!focus) return missionsState.length ? 'Tudo feito! 🎉 Bora inventar a próxima.' : 'Carregando missões…';
+  return `${MISSION_ICON[focus.status] || '⬜'} ${focus.title}`;
+}
+
+function nextStepText() {
+  const port = portInput.value.trim();
+  if (!port) return '1) Clique em “🔎 Procurar minha placa” para eu achar a ESP32.';
+  if (lastResult && lastResult.action === 'compile' && lastResult.ok) {
+    return `3) Código testado! Se a placa certa for ${port}, clique em “🚀 Enviar para a placa”.`;
+  }
+  if (lastResult && lastResult.action === 'upload' && lastResult.ok) {
+    return `4) Enviado! Clique em “👀 Abrir monitor” para ver a placa falando.`;
+  }
+  return `2) Placa pronta em ${port}. Clique em “🧪 Testar código”.`;
+}
+
+function updateGuide() {
+  const cm = document.querySelector('#currentMission');
+  const ns = document.querySelector('#nextStep');
+  if (cm) cm.textContent = currentMissionText();
+  if (ns) ns.textContent = nextStepText();
+}
+
 async function loadMissions() {
   if (!missionList) return;
   try {
     const data = await api('/api/missions');
+    missionsState = data.missions || [];
+    updateGuide();
     missionList.innerHTML = '';
     for (const mission of data.missions || []) {
       const li = document.createElement('li');
@@ -554,6 +584,7 @@ if (!TOKEN) {
   if (!restoreChat()) {
     appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex ⚡ Clique em Começar para eu procurar sua placa, ou me mande uma mensagem (pode colar foto!).');
   }
+  updateGuide();
   loadMissions();
   loadTemplates();
 }
