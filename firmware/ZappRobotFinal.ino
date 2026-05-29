@@ -525,31 +525,37 @@ void drawSmallMoon(int x, int y) {
   tft.fillCircle(x + 5, y - 3, 9, ST77XX_BLACK);
 }
 
-void drawMiniZappBase() {
-  tft.fillRect(4, 1, 31, 20, ST77XX_BLACK);
-  tft.fillRoundRect(7, 3, 24, 17, 4, ROBOT_BLUE);
-  tft.drawRoundRect(7, 3, 24, 17, 4, FACE_EDGE);
-
-  tft.drawLine(15, 15, 19, 17, ST77XX_BLACK);
-  tft.drawLine(19, 17, 23, 15, ST77XX_BLACK);
-}
+// Mini RoboEyes-style eyes (top-left corner of the clock screen),
+// replacing the old blue face. Two cyan rounded rects that collapse to a
+// thin bar when blinking, mimicking the RoboEyes look.
+#define MINI_EYE_W      8
+#define MINI_EYE_H      11
+#define MINI_EYE_R      3
+#define MINI_EYE_LX     8
+#define MINI_EYE_RX     22
+#define MINI_EYE_Y      5
+#define MINI_EYE_COLOR  ST77XX_CYAN
 
 void drawMiniZappEyes(bool openEyes) {
-  tft.fillRect(11, 7, 17, 7, ROBOT_BLUE);
+  // erase only the eye region to keep the blink flicker-free
+  tft.fillRect(MINI_EYE_LX, MINI_EYE_Y,
+               (MINI_EYE_RX + MINI_EYE_W) - MINI_EYE_LX, MINI_EYE_H,
+               ST77XX_BLACK);
 
   if (openEyes) {
-    tft.fillCircle(15, 10, 2, ST77XX_WHITE);
-    tft.fillCircle(23, 10, 2, ST77XX_WHITE);
-    tft.fillCircle(15, 10, 1, ST77XX_BLACK);
-    tft.fillCircle(23, 10, 1, ST77XX_BLACK);
+    tft.fillRoundRect(MINI_EYE_LX, MINI_EYE_Y, MINI_EYE_W, MINI_EYE_H,
+                      MINI_EYE_R, MINI_EYE_COLOR);
+    tft.fillRoundRect(MINI_EYE_RX, MINI_EYE_Y, MINI_EYE_W, MINI_EYE_H,
+                      MINI_EYE_R, MINI_EYE_COLOR);
   } else {
-    tft.drawFastHLine(13, 10, 5, ST77XX_WHITE);
-    tft.drawFastHLine(21, 10, 5, ST77XX_WHITE);
+    int by = MINI_EYE_Y + (MINI_EYE_H / 2) - 1;
+    tft.fillRoundRect(MINI_EYE_LX, by, MINI_EYE_W, 3, 1, MINI_EYE_COLOR);
+    tft.fillRoundRect(MINI_EYE_RX, by, MINI_EYE_W, 3, 1, MINI_EYE_COLOR);
   }
 }
 
 void drawMiniZappFace(bool openEyes) {
-  drawMiniZappBase();
+  tft.fillRect(4, 1, 31, 20, ST77XX_BLACK);  // clear the old mini-face area
   drawMiniZappEyes(openEyes);
 }
 
