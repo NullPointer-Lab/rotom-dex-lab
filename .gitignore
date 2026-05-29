@@ -6,5 +6,6 @@ logs/
 *.log
 *.log.err
 config/rotom.local.env
+Zapp_Context_Transfer.zip
 .pytest_cache/
 .DS_Store
