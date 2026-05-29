@@ -113,12 +113,19 @@ function setChatBusy(busy) {
 }
 
 function appendCard(message, data) {
+  const bad = !!(data && data.ok === false);
   const card = document.createElement('div');
-  card.className = `result-card ${data && data.ok === false ? 'bad' : 'good'}`;
+  card.className = `result-card ${bad ? 'bad' : 'good'}`;
   const line = document.createElement('div');
   line.className = 'result-line';
-  line.textContent = message;
+  line.textContent = bad ? `😅 ${message}` : message;
   card.appendChild(line);
+  if (bad) {
+    const hint = document.createElement('div');
+    hint.className = 'result-hint';
+    hint.textContent = friendlyHint(`${message} ${(data && data.stderr) || ''}`);
+    card.appendChild(hint);
+  }
   if (data) {
     const details = document.createElement('details');
     const summary = document.createElement('summary');
@@ -169,7 +176,7 @@ async function showResult(title, promise, action) {
     }
     return data;
   } catch (err) {
-    setStatus(`Ops! ${err.message}`, { error: err.message });
+    setStatus(`😅 Deu um errinho. ${friendlyHint(err.message)}`, { error: err.message });
     throw err;
   }
 }
@@ -332,7 +339,7 @@ async function runAction(action) {
   try {
     await runner();
   } catch (err) {
-    appendChat('agent', `Ops! ${err.message}`);
+    appendChat('agent', `😅 Deu um errinho: ${err.message}. ${friendlyHint(err.message)}`);
   }
 }
 
@@ -381,7 +388,7 @@ async function setPendingImageFromFile(file) {
     imageName.textContent = pendingImage.name;
     imagePreview.classList.remove('hidden');
   } catch (err) {
-    appendChat('agent', `Ops! ${err.message}`);
+    appendChat('agent', `😅 Deu um errinho: ${err.message}. ${friendlyHint(err.message)}`);
   }
 }
 
@@ -445,7 +452,7 @@ chatForm.onsubmit = async (event) => {
     chatStatus.classList.toggle('offline', !!data.offline);
     renderSuggestedActions(data.suggestedActions);
   } catch (err) {
-    appendChat('agent', `Ops! ${err.message}`);
+    appendChat('agent', `😅 Deu um errinho: ${err.message}. ${friendlyHint(err.message)}`);
   } finally {
     setChatBusy(false);
     chatInput.focus();
@@ -470,11 +477,71 @@ function nextStepText() {
   return `2) Placa pronta em ${port}. Clique em “🧪 Testar código”.`;
 }
 
+const TRAIL = [
+  { icon: '🔎', label: 'Procurar placa', run: () => refreshDevices() },
+  { icon: '🧪', label: 'Testar código', run: () => doCompile() },
+  { icon: '🚀', label: 'Enviar', run: () => doUpload() },
+  { icon: '👀', label: 'Ver placa', run: () => openSerial() },
+];
+
+function currentStage() {
+  const port = portInput.value.trim();
+  if (!port) return 0;
+  if (lastResult && lastResult.action === 'upload' && lastResult.ok) return 3;
+  if (lastResult && lastResult.action === 'compile' && lastResult.ok) return 2;
+  return 1;
+}
+
+function renderTrail() {
+  const trail = document.querySelector('#trail');
+  if (!trail) return;
+  const stage = currentStage();
+  trail.innerHTML = '';
+  TRAIL.forEach((step, i) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = `trail-step ${i < stage ? 'done' : i === stage ? 'active' : 'todo'}`;
+    const badge = i < stage ? '✓' : String(i + 1);
+    el.innerHTML = `<span class="trail-num">${badge}</span><span class="trail-ico">${step.icon}</span><span class="trail-label">${step.label}</span>`;
+    el.onclick = () => {
+      try {
+        const result = step.run();
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+      } catch {
+        /* ações já avisam o Davi por conta própria */
+      }
+    };
+    trail.appendChild(el);
+  });
+}
+
+function friendlyHint(text) {
+  const t = (text || '').toLowerCase();
+  if (t.includes('token')) return '💡 Reabra pelo atalho do papai (com o PIN na URL).';
+  if (t.includes('ocupad') || t.includes('acesso negado') || t.includes('access is denied') || t.includes('busy') || t.includes('in use')) {
+    return '💡 A porta pode estar ocupada. Feche o Arduino IDE ou outro monitor e tente de novo.';
+  }
+  if (t.includes('core') || t.includes('pacote') || t.includes('plataforma') || t.includes('platform')) {
+    return '💡 Pode faltar o pacote da placa (ESP32). Chame o papai para instalar.';
+  }
+  if (t.includes('sketch') || t.includes('não encontr') || t.includes('not found') || t.includes('no such')) {
+    return '💡 Não achei o arquivo do projeto. Confira o caminho com o papai.';
+  }
+  if (t.includes('timeout') || t.includes('tempo') || t.includes('demor')) {
+    return '💡 Demorou demais. Confira o cabo USB e tente de novo.';
+  }
+  if (t.includes('failed to fetch') || t.includes('networkerror') || t.includes('conex') || t.includes('refused')) {
+    return '💡 Não consegui falar com o servidor. Chame o papai para ver se o Rotom está ligado.';
+  }
+  return '💡 Tenta de novo. Se continuar, chame o papai e mostre os “Detalhes para o papai”.';
+}
+
 function updateGuide() {
   const cm = document.querySelector('#currentMission');
   const ns = document.querySelector('#nextStep');
   if (cm) cm.textContent = currentMissionText();
   if (ns) ns.textContent = nextStepText();
+  renderTrail();
 }
 
 async function loadMissions() {
