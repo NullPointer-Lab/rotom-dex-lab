@@ -96,14 +96,24 @@ async def arduino_boards():
 async def arduino_board_choices():
     result = await arduino.board_list(json_format=True)
     devices = simplify_board_list(result.stdout) if result.exit_code == 0 else []
+    selected_port = _selected_board_port(devices)
     return {
         "ok": result.exit_code == 0,
         "devices": devices,
-        "selectedPort": devices[0]["port"] if len(devices) == 1 and devices[0].get("isKnown") else None,
+        "selectedPort": selected_port,
         "needsChoice": len(devices) > 1 or (len(devices) == 1 and not devices[0].get("isKnown")),
         "message": _board_choice_message(devices, result),
         "raw": result_to_dict(result),
     }
+
+
+def _selected_board_port(devices):
+    known_devices = [device for device in devices if device.get("isKnown")]
+    if len(devices) == 1 and devices[0].get("isKnown"):
+        return devices[0]["port"]
+    if len(known_devices) == 1:
+        return known_devices[0]["port"]
+    return None
 
 
 def _board_choice_message(devices, result):
@@ -115,6 +125,9 @@ def _board_choice_message(devices, result):
         if devices[0].get("isKnown"):
             return f"Achei uma placa e já escolhi: {devices[0]['label']}."
         return f"Achei uma porta ({devices[0]['port']}), mas não tenho certeza se é a sua placa. Confira antes de enviar."
+    known_devices = [device for device in devices if device.get("isKnown")]
+    if len(known_devices) == 1:
+        return f"Achei várias portas. A mais provável é {known_devices[0]['label']}; confira antes de enviar."
     return "Achei mais de uma placa. Escolha a que você quer usar."
 
 
