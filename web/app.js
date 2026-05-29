@@ -581,6 +581,21 @@ function renderMissionUpdate() {
   return loadMissions();
 }
 
+function appendCodeCard(title, filename, code) {
+  const card = document.createElement('div');
+  card.className = 'result-card good';
+  const line = document.createElement('div');
+  line.className = 'result-line';
+  line.textContent = `👀 ${title}${filename ? ` (${filename})` : ''}`;
+  const pre = document.createElement('pre');
+  pre.className = 'code-preview';
+  pre.textContent = code || '(vazio)';
+  card.appendChild(line);
+  card.appendChild(pre);
+  chatLog.appendChild(card);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 async function loadTemplates() {
   if (!templateList) return;
   try {
@@ -591,10 +606,14 @@ async function loadTemplates() {
       card.className = 'template-card';
       card.innerHTML = `<strong>${item.title}</strong><p>${item.description}</p><code>${item.filename}</code>`;
       const preview = document.createElement('button');
-      preview.textContent = 'Ver preview';
+      preview.textContent = '👀 Ver preview';
       preview.onclick = async () => {
-        const rendered = await api(`/api/templates/${encodeURIComponent(item.id)}`);
-        appendCard(`Preview: ${rendered.title}`, { ok: true, filename: rendered.filename, content: rendered.content });
+        try {
+          const rendered = await api(`/api/templates/${encodeURIComponent(item.id)}`);
+          appendCodeCard(`Preview: ${rendered.title}`, rendered.filename, rendered.content);
+        } catch (err) {
+          appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
+        }
       };
       const create = document.createElement('button');
       create.textContent = 'Criar sketch';
@@ -729,6 +748,18 @@ if (vibeForm) {
   };
 }
 if (versionsRefreshBtn) versionsRefreshBtn.onclick = loadVersions;
+
+const viewCodeBtn = document.querySelector('#viewCodeBtn');
+if (viewCodeBtn) {
+  viewCodeBtn.onclick = async () => {
+    try {
+      const data = await api('/api/code/current');
+      appendCodeCard(`Código atual: ${data.filename}`, data.filename, data.content);
+    } catch (err) {
+      appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
+    }
+  };
+}
 
 if (!TOKEN) {
   chatStatus.textContent = 'Sem token';

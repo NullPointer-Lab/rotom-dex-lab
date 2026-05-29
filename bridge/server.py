@@ -532,6 +532,16 @@ def _vibe_save_message(instruction: str) -> str:
     return f"Davi pediu: {' '.join(instruction.split())[:72]}"
 
 
+import re as _re
+
+_SECRET_ASSIGN = _re.compile(r'(?i)\b(password|senha|secret|api[_]?key|token)(\s*=\s*")([^"]+)(")')
+
+
+def _redact_secrets(code: str) -> str:
+    """Hide secret values (Wi-Fi password, API keys) when showing code on screen."""
+    return _SECRET_ASSIGN.sub(lambda m: f"{m.group(1)}{m.group(2)}••••••{m.group(4)}", code)
+
+
 @app.get("/api/code/versions", dependencies=[Depends(require_token)])
 async def code_versions(projectId: str | None = None):
     try:
@@ -539,6 +549,22 @@ async def code_versions(projectId: str | None = None):
     except KeyError as exc:
         raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
     return {"versions": codegen.list_versions(project.root)}
+
+
+@app.get("/api/code/current", dependencies=[Depends(require_token)])
+async def code_current(projectId: str | None = None):
+    try:
+        project = config.get_project(projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    try:
+        sketch_path = Path(resolve_sketch_path(project))
+    except PolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not sketch_path.exists():
+        raise HTTPException(status_code=400, detail="Ainda não achei o arquivo do projeto.")
+    content = sketch_path.read_text(encoding="utf-8", errors="replace")
+    return {"filename": project.sketch, "content": _redact_secrets(content)}
 
 
 @app.post("/api/code/restore", dependencies=[Depends(require_token)])

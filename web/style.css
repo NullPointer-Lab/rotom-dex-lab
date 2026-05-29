@@ -76,6 +76,7 @@ main {
 .version-item.current { border-color: rgba(72, 209, 255, .4); }
 .version-label { font-size: .85rem; color: var(--text); overflow: hidden; }
 .version-item .mini { white-space: nowrap; }
+.code-preview { font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: .78rem; min-height: auto; max-height: 320px; white-space: pre; overflow: auto; margin: .4rem 0 0; }
 .card {
   background: rgba(24, 27, 39, .94);
   border: 1px solid rgba(255,255,255,.08);

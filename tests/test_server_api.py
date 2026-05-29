@@ -50,6 +50,7 @@ def test_health_is_open_without_token(client):
         ("post", "/api/chat/multimodal", {"message": "oi"}),
         ("post", "/api/code/vibe", {"instruction": "muda"}),
         ("get", "/api/code/versions", None),
+        ("get", "/api/code/current", None),
         ("post", "/api/code/restore", {"hash": "abc1234", "confirmed": True}),
     ],
 )
@@ -303,6 +304,21 @@ def test_vibe_saves_anyway_when_project_cannot_build_here(client, token, tmp_pat
     # change is kept and versioned despite no compile gate
     assert "Davizinho" in sketch.read_text(encoding="utf-8")
     assert codegen.list_versions(str(tmp_path))
+
+
+def test_code_current_redacts_secrets(client, token, tmp_path, monkeypatch):
+    project, sketch = _vibe_project(tmp_path)
+    sketch.write_text(
+        'const char* ssid = "familia-leal";\nconst char* password = "supersecreta123";\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    res = client.get("/api/code/current", headers={"X-Rotom-Token": token})
+    assert res.status_code == 200
+    content = res.json()["content"]
+    assert "supersecreta123" not in content  # password hidden
+    assert "••••••" in content
+    assert "familia-leal" in content  # SSID (network name) still shown
 
 
 # --- chat context enrichment (Phase 2) --------------------------------------
