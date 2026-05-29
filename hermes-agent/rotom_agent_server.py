@@ -111,6 +111,33 @@ VISION_SYSTEM = (
 )
 
 
+CODE_SYSTEM = (
+    "Você é o Rotom Dex programando o projeto Arduino/ESP32 do Davi a partir de instruções em "
+    "português. Você recebe o ARQUIVO, o CÓDIGO ATUAL e um PEDIDO. Responda APENAS com um ou mais "
+    "blocos de edição, sem nenhuma explicação e sem texto fora dos blocos, exatamente neste formato:\n"
+    "ARQUIVO: <nome do arquivo>\n"
+    "<<<<<<< BUSCAR\n"
+    "<trecho EXATO do código atual que será trocado>\n"
+    "=======\n"
+    "<novo trecho>\n"
+    ">>>>>>> SUBSTITUIR\n"
+    "Regras: o trecho em BUSCAR deve ser COPIADO EXATAMENTE do código atual (mesma indentação) e ser "
+    "único no arquivo. Faça a MENOR mudança possível para atender o pedido. Não invente bibliotecas novas. "
+    "Se o pedido não pedir mudança de código, responda só com a palavra SEM_MUDANCAS."
+)
+
+
+def run_code_agent(instruction: str, current_code: str, filename: str) -> str:
+    prompt = (
+        f"{CODE_SYSTEM}\n\nARQUIVO: {filename}\n\nCÓDIGO ATUAL:\n```\n{current_code}\n```\n\n"
+        f"PEDIDO DO DAVI: {instruction}\n\nResponda só com os blocos BUSCAR/SUBSTITUIR (ou SEM_MUDANCAS)."
+    )
+    cmd = [HERMES_BIN, "-z", prompt, "--profile", PROFILE]
+    with _AGENT_LOCK:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+    return (proc.stdout or "").strip()
+
+
 def _validate_image_data_url(data_url: str) -> str:
     """Validate a base64 data: image URL (type + size). Returns the mime."""
     if not data_url.startswith("data:"):
@@ -233,7 +260,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"reply": IMAGE_UNAVAILABLE, "suggestedActions": [], "offline": True})
 
     def do_POST(self):  # noqa: N802
-        if self.path.rstrip("/") != "/chat":
+        path = self.path.rstrip("/")
+        if path not in ("/chat", "/code"):
             self._send(404, {"error": "not found"})
             return
         if not self._authed():
@@ -245,6 +273,25 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._send(400, {"error": "json inválido"})
             return
+
+        if path == "/code":
+            instruction = str(data.get("instruction", "")).strip()
+            current_code = str(data.get("currentCode", ""))
+            filename = str(data.get("filename", "sketch.ino")).strip() or "sketch.ino"
+            if not instruction:
+                self._send(400, {"error": "instrução obrigatória"})
+                return
+            try:
+                edits = run_code_agent(instruction, current_code, filename)
+            except subprocess.TimeoutExpired:
+                self._send(200, {"edits": "", "offline": True})
+                return
+            except Exception:  # noqa: BLE001
+                self._send(200, {"edits": "", "offline": True})
+                return
+            self._send(200, {"edits": edits, "offline": False})
+            return
+
         message = str(data.get("message", "")).strip()
         image = data.get("imageDataUrl")
         context = data.get("context") if isinstance(data.get("context"), dict) else {}

@@ -66,6 +66,16 @@ main {
 .trail-step.done { color: var(--ok); }
 .trail-step.done .trail-num { background: var(--ok); color: #04220f; }
 .result-hint { margin-top: .35rem; color: var(--warn); font-size: .9rem; }
+.maker #vibeForm { display: flex; gap: .5rem; margin-top: .5rem; }
+.maker #vibeForm input { margin: 0; }
+.maker #vibeForm button { margin: 0; white-space: nowrap; }
+.vibe-status.good { border-color: rgba(72, 224, 138, .55); }
+.vibe-status.bad { border-color: rgba(255, 92, 92, .55); }
+.version-list { list-style: none; padding: 0; margin: .4rem 0 0; display: flex; flex-direction: column; gap: .35rem; }
+.version-item { display: flex; align-items: center; justify-content: space-between; gap: .5rem; background: var(--card-2); border: 1px solid transparent; border-radius: 10px; padding: .4rem .6rem; }
+.version-item.current { border-color: rgba(72, 209, 255, .4); }
+.version-label { font-size: .85rem; color: var(--text); overflow: hidden; }
+.version-item .mini { white-space: nowrap; }
 .card {
   background: rgba(24, 27, 39, .94);
   border: 1px solid rgba(255,255,255,.08);

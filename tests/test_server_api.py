@@ -48,6 +48,9 @@ def test_health_is_open_without_token(client):
         ("post", "/api/serial/write", {"sessionId": "serial-COM5-115200", "text": "ping"}),
         ("post", "/api/chat", {"message": "oi"}),
         ("post", "/api/chat/multimodal", {"message": "oi"}),
+        ("post", "/api/code/vibe", {"instruction": "muda"}),
+        ("get", "/api/code/versions", None),
+        ("post", "/api/code/restore", {"hash": "abc1234", "confirmed": True}),
     ],
 )
 def test_action_endpoints_reject_missing_token(client, method, path, payload):
@@ -184,6 +187,122 @@ def test_multimodal_requires_message_or_image(client, token):
         json={"message": "   "},
     )
     assert res.status_code == 400
+
+
+# --- vibecoding (git-backed code edits) -------------------------------------
+
+class _FakeConfig:
+    def __init__(self, project):
+        self._project = project
+
+    def get_project(self, project_id=None):
+        return self._project
+
+
+def _vibe_project(tmp_path):
+    from bridge.config import ProjectConfig
+
+    sketch = tmp_path / "ZappRobotFinal.ino"
+    sketch.write_text('void setup(){}\nString nome = "Davi";\n', encoding="utf-8")
+    project = ProjectConfig(
+        id="davibot",
+        name="Zapp",
+        root=str(tmp_path),
+        sketch="ZappRobotFinal.ino",
+        allowedFqbns=["esp32:esp32:esp32"],
+        defaultFqbn="esp32:esp32:esp32",
+    )
+    return project, sketch
+
+
+VIBE_EDIT = (
+    "ARQUIVO: ZappRobotFinal.ino\n"
+    "<<<<<<< BUSCAR\n"
+    'String nome = "Davi";\n'
+    "=======\n"
+    'String nome = "Davizinho";\n'
+    ">>>>>>> SUBSTITUIR\n"
+)
+
+
+def test_vibe_applies_edit_commits_and_compiles(client, token, tmp_path, monkeypatch):
+    from bridge import codegen
+    from bridge.runner import CommandResult
+
+    project, sketch = _vibe_project(tmp_path)
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    monkeypatch.setenv("ROTOM_DEX_HERMES_URL", "http://agent.test/chat")
+
+    async def fake_edits(instruction, current_code, filename):
+        assert 'String nome = "Davi";' in current_code
+        return VIBE_EDIT
+
+    async def fake_compile(proj, fqbn=None, sketch_path=None):
+        return CommandResult(args=["arduino-cli", "compile"], exit_code=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(server, "_request_code_edits", fake_edits)
+    monkeypatch.setattr(server.arduino, "compile", fake_compile)
+
+    res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda o nome para Davizinho"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True and body["compileOk"] is True and body["save"]
+    assert 'Davizinho' in sketch.read_text(encoding="utf-8")
+    assert codegen.list_versions(str(tmp_path))  # a save was recorded
+
+
+def test_vibe_reverts_when_change_breaks_a_working_build(client, token, tmp_path, monkeypatch):
+    from bridge.runner import CommandResult
+
+    project, sketch = _vibe_project(tmp_path)
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    monkeypatch.setenv("ROTOM_DEX_HERMES_URL", "http://agent.test/chat")
+
+    async def fake_edits(instruction, current_code, filename):
+        return VIBE_EDIT
+
+    # Baseline compiles; only the changed code (with "Davizinho") "breaks".
+    async def fake_compile(proj, fqbn=None, sketch_path=None):
+        broken = "Davizinho" in sketch.read_text(encoding="utf-8")
+        return CommandResult(args=["c"], exit_code=1 if broken else 0, stdout="", stderr="boom" if broken else "")
+
+    monkeypatch.setattr(server, "_request_code_edits", fake_edits)
+    monkeypatch.setattr(server.arduino, "compile", fake_compile)
+
+    res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda o nome"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is False and body.get("compileOk") is False
+    # bad change rolled back to the last good save
+    assert "Davizinho" not in sketch.read_text(encoding="utf-8")
+    assert "Davi" in sketch.read_text(encoding="utf-8")
+
+
+def test_vibe_saves_anyway_when_project_cannot_build_here(client, token, tmp_path, monkeypatch):
+    from bridge import codegen
+    from bridge.runner import CommandResult
+
+    project, sketch = _vibe_project(tmp_path)
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    monkeypatch.setenv("ROTOM_DEX_HERMES_URL", "http://agent.test/chat")
+
+    async def fake_edits(instruction, current_code, filename):
+        return VIBE_EDIT
+
+    # Nothing compiles here (e.g. a missing library) — baseline fails too.
+    async def fake_compile(proj, fqbn=None, sketch_path=None):
+        return CommandResult(args=["c"], exit_code=1, stdout="", stderr="fatal error: Lib.h: No such file")
+
+    monkeypatch.setattr(server, "_request_code_edits", fake_edits)
+    monkeypatch.setattr(server.arduino, "compile", fake_compile)
+
+    res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda o nome"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True and body.get("compileOk") is None and body["save"]
+    # change is kept and versioned despite no compile gate
+    assert "Davizinho" in sketch.read_text(encoding="utf-8")
+    assert codegen.list_versions(str(tmp_path))
 
 
 # --- chat context enrichment (Phase 2) --------------------------------------

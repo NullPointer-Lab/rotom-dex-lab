@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,9 +15,11 @@ from pydantic import BaseModel
 from .arduino import ArduinoService
 from .auth import TOKEN_MISSING_MESSAGE, SessionAuth
 from .board_parser import simplify_board_list
+from . import codegen
+from .codegen import CodegenError
 from .config import load_config, load_missions, save_mission_status
 from .hermes_client import HermesClient
-from .policy import PolicyError, _is_windows_style
+from .policy import PolicyError, _is_windows_style, resolve_sketch_path
 from .serial_monitor import SerialError, SerialManager
 from .sketch_templates import create_template_file, render_template, template_catalog
 from .translate import core_installed, friendly_arduino_message
@@ -134,6 +137,17 @@ class ChatMultimodalRequest(BaseModel):
     projectId: str | None = None
     imageDataUrl: str | None = None
     context: dict[str, Any] = {}
+
+
+class VibeRequest(BaseModel):
+    instruction: str
+    projectId: str | None = None
+
+
+class CodeRestoreRequest(BaseModel):
+    hash: str
+    projectId: str | None = None
+    confirmed: bool = False
 
 
 def result_to_dict(result, action: str = "comando"):
@@ -483,4 +497,144 @@ async def chat_multimodal(req: ChatMultimodalRequest):
         "suggestedActions": reply.suggested_actions,
         "offline": reply.offline,
         "hasImage": has_image,
+    }
+
+
+# --- vibecoding: Davi edita o projeto por palavras, com saves no git ---------
+
+def _code_agent_url() -> str | None:
+    url = os.environ.get("ROTOM_DEX_CODE_URL")
+    if url:
+        return url
+    base = os.environ.get("ROTOM_DEX_HERMES_URL")
+    if not base:
+        return None
+    return (base[:-5] + "/code") if base.endswith("/chat") else (base.rstrip("/") + "/code")
+
+
+async def _request_code_edits(instruction: str, current_code: str, filename: str) -> str:
+    url = _code_agent_url()
+    token = os.environ.get("ROTOM_DEX_HERMES_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    timeout = float(os.environ.get("ROTOM_DEX_CODE_TIMEOUT_SECONDS", "180"))
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            url,
+            json={"instruction": instruction, "currentCode": current_code, "filename": filename},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    return data.get("edits", "") if isinstance(data, dict) else ""
+
+
+def _vibe_save_message(instruction: str) -> str:
+    return f"Davi pediu: {' '.join(instruction.split())[:72]}"
+
+
+@app.get("/api/code/versions", dependencies=[Depends(require_token)])
+async def code_versions(projectId: str | None = None):
+    try:
+        project = config.get_project(projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    return {"versions": codegen.list_versions(project.root)}
+
+
+@app.post("/api/code/restore", dependencies=[Depends(require_token)])
+async def code_restore(req: CodeRestoreRequest):
+    try:
+        project = config.get_project(req.projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    if not req.confirmed:
+        raise HTTPException(status_code=400, detail="Confirme para voltar a este save.")
+    try:
+        info = codegen.restore_version(project.root, req.hash)
+    except CodegenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "message": f"Voltei para o save {info['restoredFrom']} ✅ Clique em 🧪 Testar ou 🚀 Enviar quando quiser.",
+        **info,
+    }
+
+
+@app.post("/api/code/vibe", dependencies=[Depends(require_token)])
+async def code_vibe(req: VibeRequest):
+    try:
+        project = config.get_project(req.projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    if not req.instruction.strip():
+        raise HTTPException(status_code=400, detail="Escreva o que você quer criar ou mudar.")
+    if _code_agent_url() is None:
+        return {"ok": False, "offline": True, "message": "O cérebro de código do Rotom ainda não está ligado. Peça ajuda ao papai."}
+
+    root = project.root
+    try:
+        sketch_path = Path(resolve_sketch_path(project))
+    except PolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not sketch_path.exists():
+        raise HTTPException(status_code=400, detail="Não achei o arquivo do projeto para mudar.")
+    current_code = sketch_path.read_text(encoding="utf-8", errors="replace")
+
+    codegen.ensure_repo(root)
+    if not codegen.list_versions(root):
+        codegen.commit_all(root, "Save inicial")
+
+    try:
+        edits_text = await _request_code_edits(req.instruction, current_code, project.sketch)
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "offline": True, "message": "Não consegui falar com o cérebro de código agora. Tenta de novo daqui a pouco."}
+
+    edits = codegen.parse_edits(edits_text or "")
+    if not edits:
+        return {"ok": False, "message": "Não consegui montar a mudança 🤔 Tenta explicar de outro jeito, com mais detalhes."}
+
+    result = codegen.apply_edits(root, edits)
+    if not result.applied:
+        codegen.discard_changes(root)
+        return {"ok": False, "message": "Tentei, mas não consegui encaixar a mudança no código. Tenta pedir de novo, mais simples.", "failed": result.failed}
+
+    compiled = await arduino.compile(project)
+    if compiled.exit_code == 0:
+        save = codegen.commit_all(root, _vibe_save_message(req.instruction))
+        return {
+            "ok": True,
+            "compileOk": True,
+            "save": save,
+            "applied": result.applied,
+            "failed": result.failed,
+            "message": "Pronto! Mudei, testei e salvei ✅ Agora clique em 🚀 Enviar pra colocar na placa.",
+            "raw": result_to_dict(compiled, "compile"),
+        }
+
+    # The new code didn't compile. Decide if the change broke a working project,
+    # or if the project simply can't be built in this environment (e.g. a library
+    # the Davi has on his machine isn't installed here) — in which case we must
+    # NOT punish the change: we still save it (versioned/recoverable) and say so.
+    codegen.discard_changes(root)
+    baseline = await arduino.compile(project)
+    if baseline.exit_code == 0:
+        return {
+            "ok": False,
+            "compileOk": False,
+            "message": "Mudei, mas o código ficou com errinho — então voltei pro último save bom. " + friendly_arduino_message(compiled, "compile"),
+            "failed": result.failed,
+            "raw": result_to_dict(compiled, "compile"),
+        }
+
+    # Baseline também não compila aqui -> não dá pra usar a compilação como teste.
+    codegen.apply_edits(root, edits)
+    save = codegen.commit_all(root, _vibe_save_message(req.instruction) + " (nao testado aqui)")
+    return {
+        "ok": True,
+        "compileOk": None,
+        "save": save,
+        "applied": result.applied,
+        "failed": result.failed,
+        "message": "Salvei a sua mudança ✅ — mas não consegui testar aqui (pode faltar uma biblioteca do projeto). Confira na sua máquina; se precisar, é só voltar para um save.",
+        "raw": result_to_dict(compiled, "compile"),
     }

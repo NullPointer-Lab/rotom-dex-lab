@@ -3,9 +3,9 @@
   "projects": [
     {
       "id": "davibot",
-      "name": "DaviBot",
-      "root": "C:/Users/Davi/Documents/DaviBot",
-      "sketch": "DaviBot.ino",
+      "name": "Zapp",
+      "root": "C:/Users/Fulano/Documents/Arduino/ZappRobotFinal",
+      "sketch": "ZappRobotFinal.ino",
       "allowedFqbns": [
         "esp32:esp32:esp32",
         "esp32:esp32:esp32dev",

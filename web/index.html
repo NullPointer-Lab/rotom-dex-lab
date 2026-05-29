@@ -45,6 +45,20 @@
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
         <div id="suggestedActions"></div>
       </section>
+
+      <section class="card maker">
+        <h2>🛠️ Cria e muda com palavras</h2>
+        <p class="hint">Escreva o que você quer que o Zapp faça e o Rotom programa pra você. Cada mudança vira um “save” que você pode voltar.</p>
+        <form id="vibeForm">
+          <input id="vibeInput" placeholder="Ex: faz o Zapp dizer 'Bom dia, Davi' de manhã" autocomplete="off" />
+          <button>✨ Criar / Mudar</button>
+        </form>
+        <div id="vibeStatus" class="big-status hidden"></div>
+        <details open>
+          <summary>💾 Meus saves <button type="button" id="versionsRefreshBtn" class="mini" title="Atualizar lista">↻</button></summary>
+          <ul id="versionList" class="version-list"><li class="hint">Carregando saves…</li></ul>
+        </details>
+      </section>
     </div>
 
     <aside class="secondary">

@@ -638,6 +638,98 @@ serialInput.onkeydown = (event) => {
 };
 document.querySelector('#serialCloseBtn').onclick = closeSerial;
 
+// --- vibecoding: criar/mudar por palavras + saves (git) ---------------------
+const vibeForm = document.querySelector('#vibeForm');
+const vibeInput = document.querySelector('#vibeInput');
+const vibeStatus = document.querySelector('#vibeStatus');
+const versionList = document.querySelector('#versionList');
+const versionsRefreshBtn = document.querySelector('#versionsRefreshBtn');
+
+function setVibeStatus(text, kind) {
+  if (!vibeStatus) return;
+  vibeStatus.textContent = text;
+  vibeStatus.classList.remove('hidden', 'good', 'bad');
+  if (kind) vibeStatus.classList.add(kind);
+}
+
+async function loadVersions() {
+  if (!versionList) return;
+  try {
+    const data = await api('/api/code/versions');
+    const versions = data.versions || [];
+    versionList.innerHTML = '';
+    if (!versions.length) {
+      versionList.innerHTML = '<li class="hint">Ainda não tem saves. Crie ou mude algo!</li>';
+      return;
+    }
+    for (const v of versions) {
+      const li = document.createElement('li');
+      li.className = `version-item${v.current ? ' current' : ''}`;
+      let when = '';
+      try { when = new Date(v.when).toLocaleString('pt-BR'); } catch { when = ''; }
+      const label = document.createElement('span');
+      label.className = 'version-label';
+      label.textContent = `${v.current ? '⭐ ' : ''}${v.message}${when ? ` — ${when}` : ''}`;
+      li.appendChild(label);
+      if (!v.current) {
+        const btn = document.createElement('button');
+        btn.className = 'mini';
+        btn.textContent = '↩ Voltar pra esta';
+        btn.onclick = () => restoreVersion(v.hash, v.message);
+        li.appendChild(btn);
+      }
+      versionList.appendChild(li);
+    }
+  } catch (err) {
+    versionList.innerHTML = `<li class="hint">Não consegui carregar os saves: ${err.message}</li>`;
+  }
+}
+
+async function restoreVersion(hash, message) {
+  if (!confirm(`Voltar para o save: "${message}"? Isso vira um save novo — nada se perde.`)) return;
+  setVibeStatus('Voltando para o save…', null);
+  try {
+    const data = await api('/api/code/restore', { method: 'POST', body: JSON.stringify({ hash, confirmed: true }) });
+    setVibeStatus(data.message || 'Voltei!', 'good');
+    appendChat('agent', data.message || 'Voltei para o save escolhido!');
+    await loadVersions();
+  } catch (err) {
+    setVibeStatus(`Ops! ${err.message}. ${friendlyHint(err.message)}`, 'bad');
+  }
+}
+
+if (vibeForm) {
+  vibeForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const instruction = vibeInput.value.trim();
+    if (!instruction) return;
+    const sendBtn = vibeForm.querySelector('button:not([type="button"])');
+    vibeInput.disabled = true;
+    if (sendBtn) sendBtn.disabled = true;
+    setVibeStatus('🛠️ Rotom está programando e testando… pode levar um tempinho.', null);
+    appendChat('user', `✨ ${instruction}`);
+    try {
+      const data = await api('/api/code/vibe', { method: 'POST', body: JSON.stringify({ instruction }) });
+      const msg = data.message || (data.ok ? 'Pronto!' : 'Não deu certo.');
+      setVibeStatus(msg, data.ok ? 'good' : 'bad');
+      appendCard(msg, data.raw || { ok: !!data.ok, message: msg });
+      if (data.ok) {
+        vibeInput.value = '';
+        lastResult = { action: 'compile', ok: true, message: msg };
+        updateGuide();
+      }
+      await loadVersions();
+    } catch (err) {
+      setVibeStatus(`Ops! ${err.message}. ${friendlyHint(err.message)}`, 'bad');
+      appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
+    } finally {
+      vibeInput.disabled = false;
+      if (sendBtn) sendBtn.disabled = false;
+    }
+  };
+}
+if (versionsRefreshBtn) versionsRefreshBtn.onclick = loadVersions;
+
 if (!TOKEN) {
   chatStatus.textContent = 'Sem token';
   chatStatus.classList.add('offline');
@@ -654,4 +746,5 @@ if (!TOKEN) {
   updateGuide();
   loadMissions();
   loadTemplates();
+  loadVersions();
 }
