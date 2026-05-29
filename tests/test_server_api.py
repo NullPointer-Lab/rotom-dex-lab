@@ -306,6 +306,50 @@ def test_vibe_saves_anyway_when_project_cannot_build_here(client, token, tmp_pat
     assert codegen.list_versions(str(tmp_path))
 
 
+class _FakeArduinoAutoheal:
+    """Compile fails once (missing Foo.h), then succeeds after a lib install."""
+
+    def __init__(self):
+        self.compiles = 0
+        self.installed = []
+
+    async def compile(self, project, fqbn=None, sketch_path=None):
+        from bridge.runner import CommandResult
+
+        self.compiles += 1
+        if self.compiles == 1:
+            return CommandResult(["c"], 1, "", "fatal error: Foo.h: No such file or directory")
+        return CommandResult(["c"], 0, "ok", "")
+
+    async def lib_search(self, query):
+        from bridge.runner import CommandResult
+
+        return CommandResult(["s"], 0, '{"libraries":[{"name":"Foo Lib","provides_includes":["Foo.h"]}]}', "")
+
+    async def lib_install(self, name):
+        from bridge.runner import CommandResult
+
+        self.installed.append(name)
+        return CommandResult(["i"], 0, f"Installed {name}", "")
+
+
+def test_compile_autoheals_missing_library(client, token, monkeypatch):
+    from bridge.config import ProjectConfig
+
+    project = ProjectConfig(
+        id="davibot", name="Zapp", root="C:/tmp/zapp", sketch="x.ino",
+        allowedFqbns=["esp32:esp32:esp32"], defaultFqbn="esp32:esp32:esp32",
+    )
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    monkeypatch.setattr(server, "arduino", _FakeArduinoAutoheal())
+    res = client.post("/api/arduino/compile", headers={"X-Rotom-Token": token}, json={})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body.get("installedLibraries") == ["Foo Lib"]
+    assert "Foo Lib" in body["message"]
+
+
 def test_code_current_redacts_secrets(client, token, tmp_path, monkeypatch):
     project, sketch = _vibe_project(tmp_path)
     sketch.write_text(

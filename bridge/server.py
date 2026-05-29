@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from .arduino import ArduinoService
 from .auth import TOKEN_MISSING_MESSAGE, SessionAuth
 from .board_parser import simplify_board_list
-from . import codegen
+from . import codegen, libfix
 from .codegen import CodegenError
 from .config import load_config, load_missions, save_mission_status
 from .hermes_client import HermesClient
@@ -342,13 +342,76 @@ def _board_choice_message(devices, result):
     return "Achei mais de uma placa. Escolha a que você quer usar."
 
 
+async def _compile_autoheal(project, fqbn=None, sketch_path=None, max_rounds: int = 5):
+    """Compile and, on a missing-library error, install the library from the
+    Arduino catalog and retry. Returns (result, installed_libs, unresolved_headers)."""
+    installed: list[str] = []
+    unresolved: list[str] = []
+    tried: set[str] = set()
+    result = await arduino.compile(project, fqbn, sketch_path)
+    rounds = 0
+    while result.exit_code != 0 and rounds < max_rounds:
+        headers = [
+            h for h in libfix.missing_headers(f"{result.stderr}\n{result.stdout}")
+            if h.lower() not in tried
+        ]
+        if not headers:
+            break
+        progressed = False
+        for header in headers:
+            tried.add(header.lower())
+            name = libfix.known_library(header)
+            if not name:
+                search = await arduino.lib_search(header.rsplit(".", 1)[0])
+                if search.exit_code == 0:
+                    name = libfix.pick_library_from_search(search.stdout, header)
+            if not name:
+                unresolved.append(header)
+                continue
+            install = await arduino.lib_install(name)
+            if install.exit_code == 0:
+                if name not in installed:
+                    installed.append(name)
+                progressed = True
+            else:
+                unresolved.append(header)
+        if not progressed:
+            break
+        result = await arduino.compile(project, fqbn, sketch_path)
+        rounds += 1
+    return result, installed, unresolved
+
+
+def _compile_message(result, installed: list[str], unresolved: list[str]) -> str:
+    if result.exit_code == 0:
+        if installed:
+            return f"Instalei sozinho a(s) biblioteca(s) {', '.join(installed)} e o código passou no teste! ✅"
+        return friendly_arduino_message(result, "compile")
+    if unresolved:
+        return (
+            f"Tentei consertar sozinho, mas não achei no catálogo: {', '.join(unresolved)}. "
+            "Peça ao papai para colocar essa biblioteca (ou me mande a pasta dela)."
+        )
+    return friendly_arduino_message(result, "compile")
+
+
 @app.post("/api/arduino/compile", dependencies=[Depends(require_token)])
 async def arduino_compile(req: CompileRequest):
     try:
         project = config.get_project(req.projectId)
-        return result_to_dict(await arduino.compile(project, req.fqbn, req.sketchPath), "compile")
-    except (PolicyError, KeyError) as exc:
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    try:
+        result, installed, unresolved = await _compile_autoheal(project, req.fqbn, req.sketchPath)
+    except PolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = result_to_dict(result, "compile")
+    payload["message"] = _compile_message(result, installed, unresolved)
+    if installed:
+        payload["installedLibraries"] = installed
+    if unresolved:
+        payload["missingLibraries"] = unresolved
+    return payload
 
 
 @app.post("/api/arduino/upload", dependencies=[Depends(require_token)])
@@ -624,18 +687,22 @@ async def code_vibe(req: VibeRequest):
         codegen.discard_changes(root)
         return {"ok": False, "message": "Tentei, mas não consegui encaixar a mudança no código. Tenta pedir de novo, mais simples.", "failed": result.failed}
 
-    compiled = await arduino.compile(project)
+    compiled, installed, unresolved = await _compile_autoheal(project)
     if compiled.exit_code == 0:
         save = codegen.commit_all(root, _vibe_save_message(req.instruction))
-        return {
+        extra = f" (instalei sozinho: {', '.join(installed)})" if installed else ""
+        payload = {
             "ok": True,
             "compileOk": True,
             "save": save,
             "applied": result.applied,
             "failed": result.failed,
-            "message": "Pronto! Mudei, testei e salvei ✅ Agora clique em 🚀 Enviar pra colocar na placa.",
+            "message": f"Pronto! Mudei, testei e salvei ✅{extra}. Agora clique em 🚀 Enviar pra colocar na placa.",
             "raw": result_to_dict(compiled, "compile"),
         }
+        if installed:
+            payload["installedLibraries"] = installed
+        return payload
 
     # The new code didn't compile. Decide if the change broke a working project,
     # or if the project simply can't be built in this environment (e.g. a library
@@ -655,12 +722,13 @@ async def code_vibe(req: VibeRequest):
     # Baseline também não compila aqui -> não dá pra usar a compilação como teste.
     codegen.apply_edits(root, edits)
     save = codegen.commit_all(root, _vibe_save_message(req.instruction) + " (nao testado aqui)")
+    note = f" Faltou a biblioteca: {', '.join(unresolved)}." if unresolved else ""
     return {
         "ok": True,
         "compileOk": None,
         "save": save,
         "applied": result.applied,
         "failed": result.failed,
-        "message": "Salvei a sua mudança ✅ — mas não consegui testar aqui (pode faltar uma biblioteca do projeto). Confira na sua máquina; se precisar, é só voltar para um save.",
+        "message": "Salvei a sua mudança ✅ — mas não consegui testar aqui (pode faltar uma biblioteca do projeto)." + note + " Confira na sua máquina; se precisar, é só voltar para um save.",
         "raw": result_to_dict(compiled, "compile"),
     }

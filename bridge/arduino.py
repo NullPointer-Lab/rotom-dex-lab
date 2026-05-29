@@ -21,6 +21,12 @@ class ArduinoService:
     async def core_list(self) -> CommandResult:
         return await self.runner.run(["core", "list"], timeout_seconds=30)
 
+    async def lib_search(self, query: str) -> CommandResult:
+        return await self.runner.run(["lib", "search", "--format", "json", query], timeout_seconds=60)
+
+    async def lib_install(self, name: str) -> CommandResult:
+        return await self.runner.run(["lib", "install", name], timeout_seconds=300)
+
     async def compile(self, project: ProjectConfig, fqbn: str | None = None, sketch_path: str | None = None) -> CommandResult:
         safe_fqbn = validate_fqbn(project, fqbn)
         safe_sketch = resolve_sketch_path(project, sketch_path)
