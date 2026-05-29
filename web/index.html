@@ -36,7 +36,9 @@
     </section>
 
     <section class="card chat">
-      <h2>2. Converse com o Rotom Dex</h2>
+      <h2>2. Converse com o Rotom Dex
+        <span id="chatStatus" class="badge"></span>
+      </h2>
       <p class="hint">Pode escrever como você fala. Ex: “Rotom, testa meu projeto”.</p>
       <div id="chatLog" class="chat-log"></div>
       <form id="chatForm">
@@ -47,7 +49,9 @@
     </section>
 
     <section class="card serial">
-      <h2>3. Ver mensagens da placa</h2>
+      <h2>3. Ver mensagens da placa
+        <span id="serialMode" class="badge"></span>
+      </h2>
       <p class="hint">Use isto para ver o que a ESP32 está contando.</p>
       <div class="actions">
         <button id="serialOpenBtn">👀 Abrir monitor</button>
@@ -58,7 +62,7 @@
 
     <section class="card missions">
       <h2>Missões do Davi</h2>
-      <ul>
+      <ul id="missionList">
         <li>✅ Relógio RTC no display</li>
         <li>✅ Previsão do tempo</li>
         <li>✅ Fase da lua</li>

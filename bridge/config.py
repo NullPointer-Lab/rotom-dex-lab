@@ -33,3 +33,33 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     config_path = Path(path) if path else Path(__file__).resolve().parents[1] / "config" / "projects.json"
     data: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
     return AppConfig.model_validate(data)
+
+
+def load_missions(path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Load the mission/progress list. Returns [] if the file is missing/invalid."""
+    config_path = Path(path) if path else Path(__file__).resolve().parents[1] / "config" / "missions.json"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    missions = data.get("missions") if isinstance(data, dict) else None
+    if not isinstance(missions, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        title = mission.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        status = mission.get("status")
+        if status not in ("done", "doing", "todo"):
+            status = "todo"
+        cleaned.append(
+            {
+                "id": str(mission.get("id") or title),
+                "title": title.strip(),
+                "status": status,
+            }
+        )
+    return cleaned

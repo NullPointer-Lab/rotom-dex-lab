@@ -8,19 +8,21 @@ const chatInput = document.querySelector('#chatInput');
 const suggestedActions = document.querySelector('#suggestedActions');
 const portInput = document.querySelector('#portInput');
 const serialBox = document.querySelector('#serialBox');
+const serialMode = document.querySelector('#serialMode');
+const chatStatus = document.querySelector('#chatStatus');
+const missionList = document.querySelector('#missionList');
+
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+
 let serialWs = null;
 let serialSessionId = null;
+let lastResult = null;
+let boardChoices = null;
+
+const MISSION_ICON = { done: '✅', doing: '🟡', todo: '⬜' };
 
 function pretty(obj) {
   return JSON.stringify(obj, null, 2);
-}
-
-function friendlyResult(data) {
-  if (typeof data === 'string') return data;
-  if (data.message) return data.message;
-  if (data.ok === true) return 'Deu certo! ✅';
-  if (data.ok === false) return 'Algo não deu certo. Peça ajuda ao papai.';
-  return 'Pronto.';
 }
 
 function appendChat(role, text) {
@@ -31,27 +33,58 @@ function appendChat(role, text) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
+function appendCard(message, data) {
+  const card = document.createElement('div');
+  card.className = `result-card ${data && data.ok === false ? 'bad' : 'good'}`;
+  const line = document.createElement('div');
+  line.className = 'result-line';
+  line.textContent = message;
+  card.appendChild(line);
+  if (data) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Detalhes para o papai';
+    const pre = document.createElement('pre');
+    pre.textContent = pretty(data);
+    details.appendChild(summary);
+    details.appendChild(pre);
+    card.appendChild(details);
+  }
+  chatLog.appendChild(card);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 async function api(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || pretty(data));
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Rotom-Token': TOKEN,
+    ...(options.headers || {}),
+  };
+  const res = await fetch(path, { headers, ...options });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Erro ${res.status}`);
   return data;
 }
 
-async function showResult(title, promise) {
+function setStatus(message, raw) {
+  deviceStatus.textContent = message;
+  statusBox.textContent = raw ? pretty(raw) : message;
+}
+
+async function showResult(title, promise, action) {
   deviceStatus.textContent = `${title}...`;
   statusBox.textContent = `${title}...`;
   try {
     const data = await promise;
-    deviceStatus.textContent = friendlyResult(data);
-    statusBox.textContent = pretty(data);
+    const message = data.message || (data.ok === false ? 'Algo não deu certo.' : 'Pronto!');
+    setStatus(message, data);
+    if (action) {
+      lastResult = { action, ok: data.ok, message, stdout: data.stdout, stderr: data.stderr };
+      appendCard(message, data);
+    }
     return data;
   } catch (err) {
-    deviceStatus.textContent = `Ops! ${err.message}`;
-    statusBox.textContent = `Erro: ${err.message}`;
+    setStatus(`Ops! ${err.message}`, { error: err.message });
     throw err;
   }
 }
@@ -61,6 +94,7 @@ function selectPort(port) {
 }
 
 function renderDevices(data) {
+  boardChoices = data;
   const devices = data.devices || [];
   deviceSelect.innerHTML = '';
   deviceSelectLabel.classList.toggle('hidden', devices.length <= 1 && !data.needsChoice);
@@ -69,7 +103,6 @@ function renderDevices(data) {
     selectPort(devices[0].port);
     return;
   }
-
   if (devices.length > 0) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -89,7 +122,6 @@ function renderDevices(data) {
     }
     return;
   }
-
   selectPort('');
 }
 
@@ -109,27 +141,81 @@ async function refreshDevices() {
 function requirePort(actionName) {
   const port = portInput.value.trim();
   if (!port) {
-    alert(`Primeiro clique em “Procurar minha placa”. Depois eu consigo ${actionName}.`);
+    appendChat('agent', `Primeiro clique em "Procurar minha placa". Depois eu consigo ${actionName}.`);
     return null;
   }
   return port;
 }
 
-document.querySelector('#healthBtn').onclick = async () => {
-  await showResult('Verificando o laboratório', api('/api/health'));
-  await refreshDevices();
-};
-document.querySelector('#boardsBtn').onclick = refreshDevices;
-document.querySelector('#compileBtn').onclick = () => showResult('Testando o código', api('/api/arduino/compile', { method: 'POST', body: '{}' }));
-document.querySelector('#uploadBtn').onclick = async () => {
+async function doCompile() {
+  return showResult('Testando o código', api('/api/arduino/compile', { method: 'POST', body: '{}' }), 'compile');
+}
+
+async function doUpload() {
   const port = requirePort('enviar o código para a placa');
-  if (!port) return;
-  if (!confirm(`Vou enviar o código para ${port}. A placa está certa?`)) return;
+  if (!port) return null;
+  if (!confirm(`Vou enviar o código para ${port}. A placa está certa?`)) return null;
   return showResult('Enviando para a placa', api('/api/arduino/upload', {
     method: 'POST',
     body: JSON.stringify({ port, confirmed: true }),
-  }));
+  }), 'upload');
+}
+
+async function openSerial() {
+  const port = requirePort('abrir o monitor');
+  if (!port) return;
+  const data = await api('/api/serial/open', { method: 'POST', body: JSON.stringify({ port, baud: 115200 }) });
+  serialSessionId = data.sessionId;
+  serialMode.textContent = data.fake ? 'Modo simulação (dev)' : 'Lendo a placa de verdade';
+  serialMode.classList.toggle('sim', !!data.fake);
+  serialBox.textContent += `Monitor aberto em ${port}.\n`;
+  serialWs = new WebSocket(`ws://${location.host}/api/serial/stream/${serialSessionId}?token=${encodeURIComponent(TOKEN)}`);
+  serialWs.onmessage = (ev) => {
+    serialBox.textContent += `${ev.data}\n`;
+    serialBox.scrollTop = serialBox.scrollHeight;
+  };
+}
+
+async function closeSerial() {
+  if (serialWs) serialWs.close();
+  if (serialSessionId) await api('/api/serial/close', { method: 'POST', body: JSON.stringify({ sessionId: serialSessionId }) });
+  serialBox.textContent += 'Monitor fechado.\n';
+  serialSessionId = null;
+}
+
+const ACTION_RUNNERS = {
+  'arduino.board_list': refreshDevices,
+  'arduino.compile': doCompile,
+  'arduino.upload': doUpload,
+  'serial.open': openSerial,
 };
+
+async function runAction(action) {
+  const runner = ACTION_RUNNERS[action.type];
+  if (!runner) {
+    appendChat('agent', 'Essa ação eu ainda não sei fazer.');
+    return;
+  }
+  if (action.requiresConfirmation && action.type !== 'arduino.upload') {
+    if (!confirm(`Posso ${action.label.toLowerCase()}?`)) return;
+  }
+  try {
+    await runner();
+  } catch (err) {
+    appendChat('agent', `Ops! ${err.message}`);
+  }
+}
+
+function renderSuggestedActions(actions) {
+  suggestedActions.innerHTML = '';
+  for (const action of actions || []) {
+    const btn = document.createElement('button');
+    btn.className = 'suggestion';
+    btn.textContent = action.requiresConfirmation ? `${action.label} (confirmar)` : action.label;
+    btn.onclick = () => runAction(action);
+    suggestedActions.appendChild(btn);
+  }
+}
 
 chatForm.onsubmit = async (event) => {
   event.preventDefault();
@@ -139,36 +225,46 @@ chatForm.onsubmit = async (event) => {
   appendChat('user', message);
   suggestedActions.innerHTML = '';
   try {
-    const data = await api('/api/chat', { method: 'POST', body: JSON.stringify({ message }) });
+    const data = await api('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message,
+        context: { selectedPort: portInput.value.trim() || null, lastResult, boardChoices },
+      }),
+    });
     appendChat('agent', data.reply);
-    for (const action of data.suggestedActions || []) {
-      const btn = document.createElement('button');
-      btn.textContent = `${action.type}${action.requiresConfirmation ? ' (confirmar)' : ''}`;
-      btn.onclick = () => alert(`Ação sugerida: ${pretty(action)}\n\nNo MVP, use os botões do painel Arduino para executar.`);
-      suggestedActions.appendChild(btn);
-    }
+    chatStatus.textContent = data.offline ? 'Rotom offline (modo local)' : 'Rotom online';
+    chatStatus.classList.toggle('offline', !!data.offline);
+    renderSuggestedActions(data.suggestedActions);
   } catch (err) {
     appendChat('agent', `Ops! ${err.message}`);
   }
 };
 
-document.querySelector('#serialOpenBtn').onclick = async () => {
-  const port = requirePort('abrir o monitor');
-  if (!port) return;
-  const data = await api('/api/serial/open', { method: 'POST', body: JSON.stringify({ port, baud: 115200 }) });
-  serialSessionId = data.sessionId;
-  serialBox.textContent += `Monitor aberto em ${port}.\n`;
-  serialWs = new WebSocket(`ws://${location.host}/api/serial/stream/${serialSessionId}`);
-  serialWs.onmessage = (ev) => {
-    serialBox.textContent += `${ev.data}\n`;
-    serialBox.scrollTop = serialBox.scrollHeight;
-  };
-};
+async function loadMissions() {
+  if (!missionList) return;
+  try {
+    const data = await api('/api/missions');
+    missionList.innerHTML = '';
+    for (const mission of data.missions || []) {
+      const li = document.createElement('li');
+      li.textContent = `${MISSION_ICON[mission.status] || '⬜'} ${mission.title}`;
+      missionList.appendChild(li);
+    }
+  } catch (err) {
+    // Missions are secondary; keep the hardcoded fallback already in the page.
+  }
+}
 
-document.querySelector('#serialCloseBtn').onclick = async () => {
-  if (serialWs) serialWs.close();
-  if (serialSessionId) await api('/api/serial/close', { method: 'POST', body: JSON.stringify({ sessionId: serialSessionId }) });
-  serialBox.textContent += 'Monitor fechado.\n';
+document.querySelector('#healthBtn').onclick = async () => {
+  await showResult('Verificando o laboratório', api('/api/health'));
+  await refreshDevices();
 };
+document.querySelector('#boardsBtn').onclick = refreshDevices;
+document.querySelector('#compileBtn').onclick = doCompile;
+document.querySelector('#uploadBtn').onclick = doUpload;
+document.querySelector('#serialOpenBtn').onclick = openSerial;
+document.querySelector('#serialCloseBtn').onclick = closeSerial;
 
 appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
+loadMissions();

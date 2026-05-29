@@ -1,0 +1,12 @@
+{
+  "missions": [
+    { "id": "rtc", "title": "Relógio RTC no display", "status": "done" },
+    { "id": "weather", "title": "Previsão do tempo", "status": "done" },
+    { "id": "moon", "title": "Fase da lua", "status": "done" },
+    { "id": "alarm-menu", "title": "Menu do despertador", "status": "doing" },
+    { "id": "motor-left", "title": "Teste motor esquerdo com rodas suspensas", "status": "todo" },
+    { "id": "motor-right", "title": "Teste motor direito com rodas suspensas", "status": "todo" },
+    { "id": "joystick", "title": "Controle diferencial com joystick Bluetooth", "status": "todo" },
+    { "id": "rotom-robot", "title": "Modo Rotom Dex no robô", "status": "todo" }
+  ]
+}

@@ -3,28 +3,41 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .arduino import ArduinoService
+from .auth import TOKEN_MISSING_MESSAGE, SessionAuth
 from .board_parser import simplify_board_list
-from .config import load_config
+from .config import load_config, load_missions
 from .hermes_client import HermesClient
 from .policy import PolicyError
-from .serial_monitor import SerialManager
+from .serial_monitor import SerialError, SerialManager
+from .translate import core_installed, friendly_arduino_message
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "web"
 
-app = FastAPI(title="Rotom Dex Lab", version="0.1.0")
+app = FastAPI(title="Rotom Dex Lab", version="0.2.0")
 app.mount("/static", StaticFiles(directory=str(WEB_ROOT)), name="static")
 
 config = load_config()
 arduino = ArduinoService()
 serial_manager = SerialManager()
 hermes = HermesClient()
+auth = SessionAuth()
+
+
+async def require_token(
+    x_rotom_token: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+) -> bool:
+    provided = x_rotom_token or token
+    if not auth.check(provided):
+        raise HTTPException(status_code=401, detail=TOKEN_MISSING_MESSAGE)
+    return True
 
 
 class CompileRequest(BaseModel):
@@ -53,13 +66,14 @@ class ChatRequest(BaseModel):
     context: dict[str, Any] = {}
 
 
-def result_to_dict(result):
+def result_to_dict(result, action: str = "comando"):
     return {
         "args": result.args,
         "exitCode": result.exit_code,
         "stdout": result.stdout,
         "stderr": result.stderr,
         "ok": result.exit_code == 0,
+        "message": friendly_arduino_message(result, action),
     }
 
 
@@ -71,28 +85,42 @@ async def index():
 @app.get("/api/health")
 async def health():
     found = arduino.runner.find_executable()
+    core_ok = None
+    if found:
+        project = config.get_project()
+        core_result = await arduino.core_list()
+        if core_result.exit_code == 0:
+            core_ok = core_installed(core_result.stdout, project.defaultFqbn)
     return {
         "ok": True,
         "name": "Rotom Dex Lab",
-        "bridgeVersion": "0.1.0",
+        "bridgeVersion": app.version,
         "arduinoCliFound": bool(found),
         "arduinoCliPath": found,
+        "coreInstalled": core_ok,
+        "hermesConfigured": hermes.configured,
+        "fakeSerial": serial_manager.fake,
         "projects": [p.model_dump() for p in config.projects],
     }
 
 
-@app.get("/api/arduino/version")
+@app.get("/api/missions", dependencies=[Depends(require_token)])
+async def missions():
+    return {"missions": load_missions()}
+
+
+@app.get("/api/arduino/version", dependencies=[Depends(require_token)])
 async def arduino_version():
-    return result_to_dict(await arduino.version())
+    return result_to_dict(await arduino.version(), "version")
 
 
-@app.get("/api/arduino/boards")
+@app.get("/api/arduino/boards", dependencies=[Depends(require_token)])
 async def arduino_boards():
     result = await arduino.board_list()
-    return result_to_dict(result)
+    return result_to_dict(result, "board_list")
 
 
-@app.get("/api/arduino/board-choices")
+@app.get("/api/arduino/board-choices", dependencies=[Depends(require_token)])
 async def arduino_board_choices():
     result = await arduino.board_list(json_format=True)
     devices = simplify_board_list(result.stdout) if result.exit_code == 0 else []
@@ -103,7 +131,7 @@ async def arduino_board_choices():
         "selectedPort": selected_port,
         "needsChoice": len(devices) > 1 or (len(devices) == 1 and not devices[0].get("isKnown")),
         "message": _board_choice_message(devices, result),
-        "raw": result_to_dict(result),
+        "raw": result_to_dict(result, "board_list"),
     }
 
 
@@ -131,34 +159,45 @@ def _board_choice_message(devices, result):
     return "Achei mais de uma placa. Escolha a que você quer usar."
 
 
-@app.post("/api/arduino/compile")
+@app.post("/api/arduino/compile", dependencies=[Depends(require_token)])
 async def arduino_compile(req: CompileRequest):
     try:
         project = config.get_project(req.projectId)
-        return result_to_dict(await arduino.compile(project, req.fqbn, req.sketchPath))
+        return result_to_dict(await arduino.compile(project, req.fqbn, req.sketchPath), "compile")
     except (PolicyError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/arduino/upload")
+@app.post("/api/arduino/upload", dependencies=[Depends(require_token)])
 async def arduino_upload(req: UploadRequest):
     try:
         project = config.get_project(req.projectId)
-        return result_to_dict(await arduino.upload(project, req.port, req.confirmed, req.fqbn, req.sketchPath))
+        return result_to_dict(
+            await arduino.upload(project, req.port, req.confirmed, req.fqbn, req.sketchPath),
+            "upload",
+        )
     except (PolicyError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/serial/open")
+@app.post("/api/serial/open", dependencies=[Depends(require_token)])
 async def serial_open(req: SerialOpenRequest):
     try:
         session = serial_manager.open(req.port, req.baud)
-        return {"ok": True, "sessionId": session.session_id, "port": session.port, "baud": session.baud}
     except PolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SerialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "sessionId": session.session_id,
+        "port": session.port,
+        "baud": session.baud,
+        "fake": session.fake,
+    }
 
 
-@app.post("/api/serial/close")
+@app.post("/api/serial/close", dependencies=[Depends(require_token)])
 async def serial_close(req: SerialCloseRequest):
     return {"ok": serial_manager.close(req.sessionId)}
 
@@ -166,22 +205,43 @@ async def serial_close(req: SerialCloseRequest):
 @app.websocket("/api/serial/stream/{session_id}")
 async def serial_stream(websocket: WebSocket, session_id: str):
     await websocket.accept()
+    token = websocket.query_params.get("token")
+    if not auth.check(token):
+        await websocket.send_text(TOKEN_MISSING_MESSAGE)
+        await websocket.close(code=1008)
+        return
     if session_id not in serial_manager.sessions:
-        await websocket.send_text("Sessão serial não encontrada.")
+        await websocket.send_text("Sessão serial não encontrada. Abra o monitor de novo.")
         await websocket.close()
         return
     try:
-        async for line in serial_manager.fake_stream(session_id):
+        async for line in serial_manager.stream(session_id):
             await websocket.send_text(line)
     except WebSocketDisconnect:
+        pass
+    finally:
         serial_manager.close(session_id)
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(require_token)])
 async def chat(req: ChatRequest):
     try:
-        project = config.get_project(req.projectId).model_dump()
+        project = config.get_project(req.projectId)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
-    reply = await hermes.send_message(req.message, {"project": project, **req.context})
-    return {"reply": reply.reply, "suggestedActions": reply.suggested_actions}
+
+    context = {
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "sketch": project.sketch,
+            "defaultFqbn": project.defaultFqbn,
+        },
+        **req.context,
+    }
+    reply = await hermes.send_message(req.message, context)
+    return {
+        "reply": reply.reply,
+        "suggestedActions": reply.suggested_actions,
+        "offline": reply.offline,
+    }
