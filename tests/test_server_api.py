@@ -1,9 +1,12 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from bridge import server
 from bridge.auth import TOKEN_MISSING_MESSAGE
 from bridge.hermes_client import HermesReply
+from bridge.runner import CommandResult
 from bridge.server import startup_banner
 
 
@@ -67,6 +70,70 @@ def test_missions_with_header_token(client, token):
 def test_token_accepted_as_query_param(client, token):
     res = client.get(f"/api/missions?token={token}")
     assert res.status_code == 200
+
+
+# --- board detection endpoint (regression for the "devices: []" bug) --------
+
+# Exact arduino-cli output seen on Isaac's machine: detected_ports with NO
+# matching_boards. COM9 is a CH340 (vid 0x1A86 / pid 0x7523). The endpoint must
+# never collapse this into devices: [] / "Não achei nenhuma placa".
+BUG_BOARD_LIST_JSON = json.dumps(
+    {
+        "detected_ports": [
+            {
+                "port": {
+                    "address": p,
+                    "label": p,
+                    "protocol": "serial",
+                    "protocol_label": "Serial Port",
+                    "properties": {},
+                }
+            }
+            for p in ("COM5", "COM6", "COM3", "COM7", "COM8", "COM4")
+        ]
+        + [
+            {
+                "port": {
+                    "address": "COM9",
+                    "label": "COM9",
+                    "protocol": "serial",
+                    "protocol_label": "Serial Port (USB)",
+                    "properties": {"pid": "0x7523", "serialNumber": "", "vid": "0x1A86"},
+                }
+            }
+        ]
+    }
+)
+
+
+def test_board_choices_never_empty_when_ports_detected(client, token, monkeypatch):
+    async def fake_board_list(json_format=False):
+        return CommandResult(
+            args=["arduino-cli", "board", "list", "--format", "json"],
+            exit_code=0,
+            stdout=BUG_BOARD_LIST_JSON,
+            stderr="",
+        )
+
+    monkeypatch.setattr(server.arduino, "board_list", fake_board_list)
+    res = client.get("/api/arduino/board-choices", headers={"X-Rotom-Token": token})
+    assert res.status_code == 200
+    body = res.json()
+
+    # detected_ports com portas NUNCA pode virar devices vazio.
+    assert body["devices"], "detected_ports tinha portas mas devices veio vazio"
+    ports = {device["port"] for device in body["devices"]}
+    assert ports == {"COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9"}
+
+    # COM9 (CH340) é a mais provável: sugerida e em primeiro.
+    assert body["devices"][0]["port"] == "COM9"
+    assert body["devices"][0]["isKnown"] is True
+    assert body["selectedPort"] == "COM9"
+    assert body["needsChoice"] is True
+
+    # Mensagem amigável aponta COM9 e nunca diz que não achou nada.
+    assert "COM9" in body["message"]
+    assert "Não achei nenhuma placa" not in body["message"]
 
 
 # --- chat context enrichment (Phase 2) --------------------------------------

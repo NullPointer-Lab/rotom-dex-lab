@@ -135,6 +135,11 @@ def test_template_catalog_and_render_are_child_safe():
 
 
 def test_template_create_rejects_windows_path_on_non_windows(monkeypatch):
+    # Simula um host não-Windows: o policy deve recusar caminhos no estilo
+    # "C:/..." antes de criar qualquer arquivo. O pytest.raises abaixo já é a
+    # verificação completa do comportamento (rejeição). Evitamos asserts de
+    # filesystem com "C:" porque o ntpath real do Windows os interpreta como
+    # caminho relativo a drive e o teste passa a depender da plataforma.
     monkeypatch.setattr("bridge.sketch_templates.os.name", "posix")
     project = ProjectConfig(
         id="davibot",
@@ -146,7 +151,6 @@ def test_template_create_rejects_windows_path_on_non_windows(monkeypatch):
     )
     with pytest.raises(PolicyError, match="caminho Windows"):
         create_template_file("motor-test", project, confirmed=True)
-    assert not (Path.cwd() / "C:").exists()
 
 
 def test_template_create_requires_confirmation_and_rejects_duplicate(tmp_path):

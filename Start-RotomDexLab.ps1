@@ -28,6 +28,7 @@ function Stop-ExistingRotomServer {
   $Listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
   if (-not $Listeners) { return }
 
+  $StoppedRotom = $false
   $ProcessIds = $Listeners | Select-Object -ExpandProperty OwningProcess -Unique
   foreach ($ProcessId in $ProcessIds) {
     if (-not $ProcessId -or $ProcessId -eq 0) { continue }
@@ -39,11 +40,23 @@ function Stop-ExistingRotomServer {
       Write-Rotom "Fechando servidor Rotom Dex antigo na porta $Port para carregar a versão nova..." "Yellow"
       Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
       Wait-Process -Id $ProcessId -Timeout 5 -ErrorAction SilentlyContinue
-      Start-Sleep -Milliseconds 300
+      $StoppedRotom = $true
       continue
     }
     throw "A porta $Port já está em uso por $Name (PID $ProcessId), mas não parece ser o Rotom Dex. Feche esse programa ou use outra ROTOM_DEX_PORT."
   }
+
+  if (-not $StoppedRotom) { return }
+
+  # O processo pode ter saído, mas a porta às vezes leva um instante para ser
+  # liberada pelo Windows. Aguarda até ~5s antes de iniciar o servidor novo,
+  # para o navegador nunca falar com um backend antigo.
+  for ($i = 0; $i -lt 20; $i++) {
+    $Still = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $Still) { return }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "A porta $Port não foi liberada a tempo pelo servidor antigo. Tente rodar .\Start-RotomDexLab.ps1 de novo em alguns segundos."
 }
 
 # Always run from the venv Python. Create/install it if missing.
