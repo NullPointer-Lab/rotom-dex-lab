@@ -106,6 +106,24 @@ summary { cursor: pointer; }
 }
 .badge.offline, .badge.sim { background: rgba(255, 202, 58, .18); color: var(--warn); }
 .suggestion { background: linear-gradient(135deg, var(--accent-2), #3a7bd5); }
+button.mini {
+  padding: .2rem .35rem;
+  border-radius: 8px;
+  font-size: .8rem;
+  margin-left: .35rem;
+  background: var(--card-2);
+}
+.serial-send { display: flex; gap: .5rem; margin-top: .5rem; }
+.serial-send input { margin-top: 0; }
+.template-list { display: grid; gap: .6rem; }
+.template-card {
+  background: var(--card-2);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: .75rem;
+}
+.template-card p { margin-bottom: .35rem; }
+.template-card code { color: var(--accent-2); }
 .result-card {
   background: var(--card-2);
   border-left: 4px solid var(--ok);

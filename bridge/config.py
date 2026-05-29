@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+MISSION_STATUSES = ("done", "doing", "todo")
+
 
 class ProjectConfig(BaseModel):
     id: str
@@ -53,7 +55,7 @@ def load_missions(path: str | Path | None = None) -> list[dict[str, Any]]:
         if not isinstance(title, str) or not title.strip():
             continue
         status = mission.get("status")
-        if status not in ("done", "doing", "todo"):
+        if status not in MISSION_STATUSES:
             status = "todo"
         cleaned.append(
             {
@@ -63,3 +65,30 @@ def load_missions(path: str | Path | None = None) -> list[dict[str, Any]]:
             }
         )
     return cleaned
+
+
+def save_mission_status(mission_id: str, status: str, path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Persist a mission status update and return the cleaned mission list."""
+    if status not in MISSION_STATUSES:
+        raise ValueError("Status de missão inválido.")
+    config_path = Path(path) if path else Path(__file__).resolve().parents[1] / "config" / "missions.json"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {"missions": []}
+    missions = data.get("missions") if isinstance(data, dict) else []
+    if not isinstance(missions, list):
+        missions = []
+    if not isinstance(data, dict):
+        data = {}
+    found = False
+    for mission in missions:
+        if isinstance(mission, dict) and str(mission.get("id")) == mission_id:
+            mission["status"] = status
+            found = True
+            break
+    if not found:
+        raise KeyError(f"Missão não encontrada: {mission_id}")
+    data["missions"] = missions
+    config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return load_missions(config_path)

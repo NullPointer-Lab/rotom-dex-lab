@@ -10,7 +10,9 @@ Interface local para o Davi conversar com o agente **Rotom Dex** e operar, de fo
 - Se houver mais de uma placa, mostrar uma lista para escolher.
 - Compilar sketches Arduino/ESP32.
 - Fazer upload com confirmação humana.
-- Abrir monitor serial para depuração.
+- Abrir monitor serial para depuração, com baud selecionável, limpar tela e envio de mensagens curtas.
+- Atualizar missões do Davi pela UI.
+- Criar templates seguros de sketches pequenos com preview e confirmação.
 - Atualizar o Rotom Dex Lab automaticamente quando o projeto estiver em Git, ou por ZIP configurado.
 - Conversar com o agente Hermes dedicado do Davi, sem expor shell irrestrito.
 
@@ -83,6 +85,28 @@ Isto é uma proteção doméstica simples, não autenticação corporativa: sem 
 - **Online:** com `ROTOM_DEX_HERMES_URL` configurado, cada mensagem do Davi é enviada ao backend junto com o contexto (projeto, placa selecionada, último resultado de comando, placas detectadas). O Rotom responde com o texto do backend e sugere ações.
 - **Offline / falha:** sem URL configurada, ou se o backend demorar/errar, o chat **diz claramente que está offline** e ainda sugere ações locais seguras (procurar placa, compilar, enviar, abrir serial) com base nas palavras da mensagem. Ele nunca finge que o agente real respondeu.
 - Ações vindas do backend são **normalizadas e validadas** no servidor: tipos desconhecidos são descartados e a confirmação de upload nunca pode ser desligada por um backend remoto.
+- O modo offline agora também pode sugerir diagnóstico do papai e templates seguros quando o Davi mencionar status, diagnóstico, sketch, exemplo ou motor.
+
+## Diagnóstico do papai
+
+A UI tem o botão **Diagnóstico do papai**, que chama `/api/diagnostics` e reúne em um só lugar:
+
+- status do Arduino CLI;
+- core/FQBN padrão;
+- caminho do sketch configurado;
+- modo serial real ou simulação;
+- portas detectadas, porta selecionada e saída bruta do `arduino-cli board list`.
+
+Use isso antes de debugar às cegas quando a placa não aparece ou o upload falha.
+
+## Monitor serial
+
+O monitor serial permite escolher baud rate (`115200`, `9600`, `57600`, `74880`), limpar a tela e enviar uma mensagem curta para a placa pela serial. O envio só funciona depois de abrir uma sessão serial e não expõe shell nem comandos de sistema.
+
+## Missões e templates
+
+- As missões vêm de `config/missions.json` e podem ser marcadas como `todo`, `doing` ou `done` pela UI.
+- Templates seguros aparecem na seção **Templates seguros**. O usuário pode ver preview e criar um `.ino` pequeno na pasta do projeto, sempre com confirmação.
 
 ## Atualizações no Windows
 

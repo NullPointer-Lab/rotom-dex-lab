@@ -95,6 +95,12 @@ def test_open_rejects_invalid_port_with_policy_error():
         mgr.open("/dev/ttyUSB0")
 
 
+def test_open_rejects_unsupported_baud_with_policy_error():
+    mgr = SerialManager(serial_factory=FakeSerial, fake=False)
+    with pytest.raises(PolicyError, match="Baud rate"):
+        mgr.open("COM5", 12345)
+
+
 def test_open_translates_busy_error():
     def boom(**kwargs):
         raise Exception("Access is denied.")

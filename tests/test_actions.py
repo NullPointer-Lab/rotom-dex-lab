@@ -34,5 +34,7 @@ def test_normalize_actions_drops_unknown_and_dedupes():
 def test_local_actions_for_keywords():
     types = [a["type"] for a in local_actions_for("Rotom, quero enviar para a placa")]
     assert "arduino.upload" in types
+    assert "diagnostics.open" in [a["type"] for a in local_actions_for("diagnóstico do papai")]
+    assert "templates.list" in [a["type"] for a in local_actions_for("sketch de motor")]
     # always returns at least something usable
     assert local_actions_for("oi") != []

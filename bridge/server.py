@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -14,14 +14,16 @@ from pydantic import BaseModel
 from .arduino import ArduinoService
 from .auth import TOKEN_MISSING_MESSAGE, SessionAuth
 from .board_parser import simplify_board_list
-from .config import load_config, load_missions
+from .config import load_config, load_missions, save_mission_status
 from .hermes_client import HermesClient
-from .policy import PolicyError
+from .policy import PolicyError, _is_windows_style
 from .serial_monitor import SerialError, SerialManager
+from .sketch_templates import create_template_file, render_template, template_catalog
 from .translate import core_installed, friendly_arduino_message
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "web"
+MISSIONS_PATH = ROOT / "config" / "missions.json"
 
 
 def startup_banner(
@@ -105,6 +107,20 @@ class SerialCloseRequest(BaseModel):
     sessionId: str
 
 
+class SerialWriteRequest(BaseModel):
+    sessionId: str
+    text: str
+
+
+class MissionStatusRequest(BaseModel):
+    status: str
+
+
+class TemplateCreateRequest(BaseModel):
+    confirmed: bool = False
+    projectId: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
     projectId: str | None = None
@@ -119,6 +135,24 @@ def result_to_dict(result, action: str = "comando"):
         "stderr": result.stderr,
         "ok": result.exit_code == 0,
         "message": friendly_arduino_message(result, action),
+    }
+
+
+def _sketch_check(project) -> dict[str, Any]:
+    if _is_windows_style(project.root) and os.name != "nt":
+        path = str(PureWindowsPath(project.root) / project.sketch)
+        return {
+            "id": "sketchPath",
+            "label": "Sketch configurado",
+            "ok": None,
+            "detail": f"{path} (caminho Windows; existência só é conferida no Windows do Davi)",
+        }
+    sketch_path = Path(project.root).expanduser() / project.sketch
+    return {
+        "id": "sketchPath",
+        "label": "Sketch configurado",
+        "ok": sketch_path.exists(),
+        "detail": str(sketch_path),
     }
 
 
@@ -151,7 +185,88 @@ async def health():
 
 @app.get("/api/missions", dependencies=[Depends(require_token)])
 async def missions():
-    return {"missions": load_missions()}
+    return {"missions": load_missions(MISSIONS_PATH)}
+
+
+@app.post("/api/missions/{mission_id}/status", dependencies=[Depends(require_token)])
+async def mission_status(mission_id: str, req: MissionStatusRequest):
+    try:
+        return {"missions": save_mission_status(mission_id, req.status, MISSIONS_PATH)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/diagnostics", dependencies=[Depends(require_token)])
+async def diagnostics():
+    health_body = await health()
+    project = config.get_project()
+    board_result = await arduino.board_list(json_format=True)
+    devices = simplify_board_list(board_result.stdout) if board_result.exit_code == 0 else []
+    checks = [
+        {
+            "id": "arduinoCli",
+            "label": "Arduino CLI",
+            "ok": bool(health_body["arduinoCliFound"]),
+            "detail": health_body.get("arduinoCliPath") or "arduino-cli não encontrado no PATH",
+        },
+        {
+            "id": "esp32Core",
+            "label": "Pacote/core da placa",
+            "ok": health_body.get("coreInstalled"),
+            "detail": project.defaultFqbn,
+        },
+        _sketch_check(project),
+        {
+            "id": "serialMode",
+            "label": "Monitor serial",
+            "ok": True,
+            "detail": "simulação/dev" if serial_manager.fake else "modo real",
+        },
+        {
+            "id": "devices",
+            "label": "Portas encontradas",
+            "ok": len(devices) > 0,
+            "detail": f"{len(devices)} porta(s) detectada(s)",
+        },
+    ]
+    return {
+        "ok": True,
+        "health": health_body,
+        "checks": checks,
+        "boardChoices": {
+            "devices": devices,
+            "selectedPort": _selected_board_port(devices),
+            "message": _board_choice_message(devices, board_result),
+            "raw": result_to_dict(board_result, "board_list"),
+        },
+    }
+
+
+@app.get("/api/templates", dependencies=[Depends(require_token)])
+async def templates():
+    return {"templates": template_catalog()}
+
+
+@app.get("/api/templates/{template_id}", dependencies=[Depends(require_token)])
+async def template_preview(template_id: str, projectId: str | None = None):
+    try:
+        project = config.get_project(projectId)
+        return render_template(template_id, project_name=project.name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Template ou projeto não encontrado.") from exc
+
+
+@app.post("/api/templates/{template_id}/create", dependencies=[Depends(require_token)])
+async def template_create(template_id: str, req: TemplateCreateRequest):
+    try:
+        project = config.get_project(req.projectId)
+        return create_template_file(template_id, project, confirmed=req.confirmed)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Template ou projeto não encontrado.") from exc
+    except PolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/arduino/version", dependencies=[Depends(require_token)])
@@ -245,6 +360,20 @@ async def serial_open(req: SerialOpenRequest):
 @app.post("/api/serial/close", dependencies=[Depends(require_token)])
 async def serial_close(req: SerialCloseRequest):
     return {"ok": serial_manager.close(req.sessionId)}
+
+
+@app.post("/api/serial/clear", dependencies=[Depends(require_token)])
+async def serial_clear(req: SerialCloseRequest):
+    return {"ok": serial_manager.clear(req.sessionId)}
+
+
+@app.post("/api/serial/write", dependencies=[Depends(require_token)])
+async def serial_write(req: SerialWriteRequest):
+    try:
+        message = serial_manager.write(req.sessionId, req.text)
+    except SerialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message": message}
 
 
 @app.websocket("/api/serial/stream/{session_id}")

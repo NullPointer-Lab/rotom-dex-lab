@@ -10,7 +10,9 @@ try:
 except Exception:  # pragma: no cover - pyserial may be absent in some dev contexts
     serial = None
 
-from .policy import validate_port
+from .policy import PolicyError, validate_port
+
+ALLOWED_BAUD_RATES = {9600, 57600, 74880, 115200}
 
 
 class SerialError(Exception):
@@ -46,6 +48,8 @@ class SerialManager:
 
     def open(self, port: str, baud: int = 115200) -> SerialSession:
         safe_port = validate_port(port)
+        if baud not in ALLOWED_BAUD_RATES:
+            raise PolicyError("Baud rate não permitido. Use 9600, 57600, 74880 ou 115200.")
         session_id = f"serial-{safe_port}-{baud}"
         existing = self.sessions.get(session_id)
         if existing:
@@ -106,6 +110,33 @@ class SerialManager:
             except Exception:  # pragma: no cover - closing should not raise to the user
                 pass
         return True
+
+    def clear(self, session_id: str) -> bool:
+        session = self.sessions.get(session_id)
+        if not session:
+            return False
+        session.lines.clear()
+        return True
+
+    def write(self, session_id: str, text: str) -> str:
+        session = self.sessions.get(session_id)
+        if not session or not session.running:
+            raise SerialError("Monitor serial não está aberto. Abra o monitor de novo.")
+        clean = text.strip()
+        if not clean:
+            raise SerialError("Digite uma mensagem antes de enviar para a placa.")
+        if len(clean) > 200:
+            raise SerialError("Mensagem muito grande para enviar pela serial.")
+        if session.fake:
+            session.lines.append(f"[SIMULAÇÃO] Davi enviou: {clean}")
+        else:
+            if session.serial is None:
+                raise SerialError("Monitor serial não está conectado à placa.")
+            try:
+                session.serial.write((clean + "\n").encode("utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                raise SerialError(f"Não consegui enviar pela serial: {self._friendly_open_error(session.port, exc)}") from exc
+        return f"Enviei para a placa: {clean}"
 
     async def stream(self, session_id: str) -> AsyncIterator[str]:
         session = self.sessions.get(session_id)

@@ -32,10 +32,17 @@ def test_health_is_open_without_token(client):
     "method,path,payload",
     [
         ("get", "/api/missions", None),
+        ("post", "/api/missions/rtc/status", {"status": "done"}),
+        ("get", "/api/diagnostics", None),
+        ("get", "/api/templates", None),
+        ("get", "/api/templates/motor-test", None),
+        ("post", "/api/templates/motor-test/create", {"confirmed": True}),
         ("get", "/api/arduino/board-choices", None),
         ("post", "/api/arduino/compile", {}),
         ("post", "/api/arduino/upload", {"port": "COM5", "confirmed": True}),
         ("post", "/api/serial/open", {"port": "COM5", "baud": 115200}),
+        ("post", "/api/serial/clear", {"sessionId": "serial-COM5-115200"}),
+        ("post", "/api/serial/write", {"sessionId": "serial-COM5-115200", "text": "ping"}),
         ("post", "/api/chat", {"message": "oi"}),
     ],
 )

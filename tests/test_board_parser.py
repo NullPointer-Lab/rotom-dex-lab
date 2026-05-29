@@ -6,14 +6,11 @@ from bridge.board_parser import simplify_board_list
 def test_simplify_board_list_from_json_auto_select_shape():
     stdout = '[{"address":"COM5","matching_boards":[{"name":"ESP32 Dev Module","fqbn":"esp32:esp32:esp32"}]}]'
     devices = simplify_board_list(stdout)
-    assert devices == [
-        {
-            "port": "COM5",
-            "name": "ESP32 Dev Module",
-            "label": "ESP32 Dev Module em COM5",
-            "isKnown": True,
-        }
-    ]
+    assert devices[0]["port"] == "COM5"
+    assert devices[0]["name"] == "ESP32 Dev Module"
+    assert devices[0]["label"] == "ESP32 Dev Module em COM5"
+    assert devices[0]["isKnown"] is True
+    assert devices[0]["confidence"] == "provavel"
 
 
 def test_simplify_board_list_from_dict_shape_multiple_devices():
@@ -64,9 +61,9 @@ def test_simplify_board_list_from_detected_ports_shape_prefers_usb_serial():
     """
     devices = simplify_board_list(stdout)
     assert [device["port"] for device in devices] == ["COM9", "COM5"]
-    assert devices[0] == {
-        "port": "COM9",
-        "name": "USB-Serial CH340/CH341 (provável ESP32/Arduino)",
-        "label": "USB-Serial CH340/CH341 (provável ESP32/Arduino) em COM9",
-        "isKnown": True,
-    }
+    assert devices[0]["port"] == "COM9"
+    assert devices[0]["name"] == "USB-Serial CH340/CH341 (provável ESP32/Arduino)"
+    assert devices[0]["label"] == "USB-Serial CH340/CH341 (provável ESP32/Arduino) em COM9"
+    assert devices[0]["isKnown"] is True
+    assert devices[0]["confidence"] == "provavel"
+    assert "VID 0x1A86 / PID 0x7523" in devices[0]["reason"]

@@ -11,6 +11,12 @@ const serialBox = document.querySelector('#serialBox');
 const serialMode = document.querySelector('#serialMode');
 const chatStatus = document.querySelector('#chatStatus');
 const missionList = document.querySelector('#missionList');
+const diagnosticsBtn = document.querySelector('#diagnosticsBtn');
+const baudSelect = document.querySelector('#baudSelect');
+const serialInput = document.querySelector('#serialInput');
+const serialSendBtn = document.querySelector('#serialSendBtn');
+const serialClearBtn = document.querySelector('#serialClearBtn');
+const templateList = document.querySelector('#templateList');
 
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
@@ -91,16 +97,27 @@ async function showResult(title, promise, action) {
 
 function selectPort(port) {
   portInput.value = port || '';
+  if (port) localStorage.setItem('rotomDexLastPort', port);
 }
 
 function renderDevices(data) {
   boardChoices = data;
   const devices = data.devices || [];
+  const lastPort = localStorage.getItem('rotomDexLastPort');
   deviceSelect.innerHTML = '';
-  deviceSelectLabel.classList.toggle('hidden', devices.length <= 1 && !data.needsChoice);
+  deviceSelectLabel.classList.toggle('hidden', devices.length === 0);
 
   if (devices.length === 1 && !data.needsChoice) {
-    selectPort(devices[0].port);
+    const device = devices[0];
+    const option = document.createElement('option');
+    option.value = device.port;
+    const confidence = device.confidence === 'provavel' ? '⭐ provável' : 'porta genérica';
+    option.textContent = `${device.label || `${device.name} em ${device.port}`} — ${confidence}`;
+    option.title = device.reason || '';
+    deviceSelect.appendChild(option);
+    deviceSelect.value = device.port;
+    selectPort(device.port);
+    deviceStatus.textContent = `${data.message || 'Achei a placa.'} ${device.reason || ''}`.trim();
     return;
   }
   if (devices.length > 0) {
@@ -111,14 +128,20 @@ function renderDevices(data) {
     for (const device of devices) {
       const option = document.createElement('option');
       option.value = device.port;
-      option.textContent = device.label || `${device.name} em ${device.port}`;
+      const confidence = device.confidence === 'provavel' ? '⭐ provável' : 'porta genérica';
+      option.textContent = `${device.label || `${device.name} em ${device.port}`} — ${confidence}`;
+      option.title = device.reason || '';
       deviceSelect.appendChild(option);
     }
-    if (data.selectedPort) {
-      deviceSelect.value = data.selectedPort;
-      selectPort(data.selectedPort);
+    const preferred = data.selectedPort || (devices.some((d) => d.port === lastPort) ? lastPort : '');
+    if (preferred) {
+      deviceSelect.value = preferred;
+      selectPort(preferred);
+      const found = devices.find((d) => d.port === preferred);
+      deviceStatus.textContent = `${data.message || 'Achei portas.'} Usando ${found ? found.label : preferred}. ${found && found.reason ? found.reason : ''}`.trim();
     } else {
       selectPort('');
+      deviceStatus.textContent = data.message || 'Achei portas. Escolha a que você quer usar.';
     }
     return;
   }
@@ -164,11 +187,12 @@ async function doUpload() {
 async function openSerial() {
   const port = requirePort('abrir o monitor');
   if (!port) return;
-  const data = await api('/api/serial/open', { method: 'POST', body: JSON.stringify({ port, baud: 115200 }) });
+  const baud = Number(baudSelect.value || '115200');
+  const data = await api('/api/serial/open', { method: 'POST', body: JSON.stringify({ port, baud }) });
   serialSessionId = data.sessionId;
-  serialMode.textContent = data.fake ? 'Modo simulação (dev)' : 'Lendo a placa de verdade';
+  serialMode.textContent = data.fake ? 'Modo simulação (dev)' : `Lendo a placa de verdade @ ${baud}`;
   serialMode.classList.toggle('sim', !!data.fake);
-  serialBox.textContent += `Monitor aberto em ${port}.\n`;
+  serialBox.textContent += `Monitor aberto em ${port} @ ${baud}.\n`;
   serialWs = new WebSocket(`ws://${location.host}/api/serial/stream/${serialSessionId}?token=${encodeURIComponent(TOKEN)}`);
   serialWs.onmessage = (ev) => {
     serialBox.textContent += `${ev.data}\n`;
@@ -183,11 +207,37 @@ async function closeSerial() {
   serialSessionId = null;
 }
 
+async function clearSerial() {
+  if (serialSessionId) await api('/api/serial/clear', { method: 'POST', body: JSON.stringify({ sessionId: serialSessionId }) });
+  serialBox.textContent = '';
+}
+
+async function sendSerialText() {
+  if (!serialSessionId) {
+    appendChat('agent', 'Abra o monitor serial antes de enviar mensagem para a placa.');
+    return;
+  }
+  const text = serialInput.value.trim();
+  if (!text) return;
+  const data = await api('/api/serial/write', { method: 'POST', body: JSON.stringify({ sessionId: serialSessionId, text }) });
+  serialInput.value = '';
+  serialBox.textContent += `Davi > ${text}\n`;
+  appendCard(data.message, data);
+}
+
+async function runDiagnostics() {
+  const data = await showResult('Gerando diagnóstico do papai', api('/api/diagnostics'), 'diagnostics');
+  if (data.boardChoices) renderDevices(data.boardChoices);
+  return data;
+}
+
 const ACTION_RUNNERS = {
   'arduino.board_list': refreshDevices,
   'arduino.compile': doCompile,
   'arduino.upload': doUpload,
   'serial.open': openSerial,
+  'diagnostics.open': runDiagnostics,
+  'templates.list': loadTemplates,
 };
 
 async function runAction(action) {
@@ -248,11 +298,66 @@ async function loadMissions() {
     missionList.innerHTML = '';
     for (const mission of data.missions || []) {
       const li = document.createElement('li');
-      li.textContent = `${MISSION_ICON[mission.status] || '⬜'} ${mission.title}`;
+      const title = document.createElement('span');
+      title.textContent = `${MISSION_ICON[mission.status] || '⬜'} ${mission.title}`;
+      li.appendChild(title);
+      for (const status of ['todo', 'doing', 'done']) {
+        const btn = document.createElement('button');
+        btn.className = 'mini';
+        btn.textContent = MISSION_ICON[status];
+        btn.title = `Marcar como ${status}`;
+        btn.onclick = async () => {
+          await api(`/api/missions/${encodeURIComponent(mission.id)}/status`, {
+            method: 'POST',
+            body: JSON.stringify({ status }),
+          });
+          renderMissionUpdate();
+        };
+        li.appendChild(btn);
+      }
       missionList.appendChild(li);
     }
   } catch (err) {
     // Missions are secondary; keep the hardcoded fallback already in the page.
+  }
+}
+
+function renderMissionUpdate() {
+  return loadMissions();
+}
+
+async function loadTemplates() {
+  if (!templateList) return;
+  try {
+    const data = await api('/api/templates');
+    templateList.innerHTML = '';
+    for (const item of data.templates || []) {
+      const card = document.createElement('div');
+      card.className = 'template-card';
+      card.innerHTML = `<strong>${item.title}</strong><p>${item.description}</p><code>${item.filename}</code>`;
+      const preview = document.createElement('button');
+      preview.textContent = 'Ver preview';
+      preview.onclick = async () => {
+        const rendered = await api(`/api/templates/${encodeURIComponent(item.id)}`);
+        appendCard(`Preview: ${rendered.title}`, { ok: true, filename: rendered.filename, content: rendered.content });
+      };
+      const create = document.createElement('button');
+      create.textContent = 'Criar sketch';
+      create.className = 'danger';
+      create.onclick = async () => {
+        if (!confirm(`Criar ${item.filename} na pasta do projeto?`)) return;
+        const created = await api(`/api/templates/${encodeURIComponent(item.id)}/create`, {
+          method: 'POST',
+          body: JSON.stringify({ confirmed: true }),
+        });
+        appendCard(created.message, created);
+      };
+      card.appendChild(preview);
+      card.appendChild(create);
+      templateList.appendChild(card);
+    }
+  } catch (err) {
+    templateList.textContent = `Não consegui carregar templates: ${err.message}`;
   }
 }
 
@@ -267,9 +372,15 @@ document.querySelector('#healthBtn').onclick = async () => {
   await refreshDevices();
 };
 document.querySelector('#boardsBtn').onclick = refreshDevices;
+diagnosticsBtn.onclick = runDiagnostics;
 document.querySelector('#compileBtn').onclick = doCompile;
 document.querySelector('#uploadBtn').onclick = doUpload;
 document.querySelector('#serialOpenBtn').onclick = openSerial;
+serialClearBtn.onclick = clearSerial;
+serialSendBtn.onclick = sendSerialText;
+serialInput.onkeydown = (event) => {
+  if (event.key === 'Enter') sendSerialText();
+};
 document.querySelector('#serialCloseBtn').onclick = closeSerial;
 
 if (!TOKEN) {
@@ -278,3 +389,4 @@ if (!TOKEN) {
   appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
 }
 loadMissions();
+loadTemplates();

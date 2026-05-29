@@ -34,12 +34,16 @@ def simplify_board_list(stdout: str) -> list[dict[str, Any]]:
 
         board_name = _board_name(row) or _known_usb_serial_name(port_info)
         normalized_port = str(port).upper() if str(port).lower().startswith("com") else str(port)
+        reason = _device_reason(row, port_info, bool(board_name))
+        confidence = "provavel" if board_name else "generica"
         devices.append(
             {
                 "port": normalized_port,
-                "name": board_name or "Placa Arduino/ESP32",
-                "label": f"{board_name or 'Placa Arduino/ESP32'} em {normalized_port}",
+                "name": board_name or "Porta serial genérica",
+                "label": f"{board_name or 'Porta serial genérica'} em {normalized_port}",
                 "isKnown": bool(board_name),
+                "confidence": confidence,
+                "reason": reason,
             }
         )
     return sorted(devices, key=lambda device: (not device.get("isKnown"), device["port"]))
@@ -91,6 +95,33 @@ def _known_usb_serial_name(port_info: dict[str, Any]) -> str | None:
     return None
 
 
+def _format_hex_id(value: Any) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    if text.lower().startswith("0x"):
+        return "0x" + text[2:].upper()
+    return text.upper()
+
+
+def _device_reason(row: dict[str, Any], port_info: dict[str, Any], is_known: bool) -> str:
+    raw_properties = port_info.get("properties")
+    properties: dict[str, Any] = raw_properties if isinstance(raw_properties, dict) else {}
+    vid = _format_hex_id(properties.get("vid", ""))
+    pid = _format_hex_id(properties.get("pid", ""))
+    protocol = _first_string(port_info, "protocol_label", "protocol") or _first_string(row, "protocol_label", "protocol")
+    parts: list[str] = []
+    if protocol:
+        parts.append(protocol)
+    if vid or pid:
+        parts.append(f"VID {vid or '?'} / PID {pid or '?'}")
+    if is_known:
+        parts.append("parece ser a placa do projeto")
+    else:
+        parts.append("porta serial encontrada; confirme antes de enviar")
+    return " — ".join(parts)
+
+
 def _parse_text_board_list(text: str) -> list[dict[str, Any]]:
     devices: list[dict[str, Any]] = []
     for raw_line in text.splitlines():
@@ -108,6 +139,8 @@ def _parse_text_board_list(text: str) -> list[dict[str, Any]]:
                 "name": name,
                 "label": f"{name} em {port.upper()}",
                 "isKnown": name != "Placa Arduino/ESP32",
+                "confidence": "provavel" if name != "Placa Arduino/ESP32" else "generica",
+                "reason": "Saída de texto do Arduino CLI; confirme antes de enviar",
             }
         )
     return devices

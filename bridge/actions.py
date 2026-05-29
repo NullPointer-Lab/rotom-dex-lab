@@ -27,6 +27,14 @@ ALLOWED_ACTIONS: dict[str, dict[str, Any]] = {
         "label": "Abrir o monitor da placa",
         "requiresConfirmation": False,
     },
+    "diagnostics.open": {
+        "label": "Abrir diagnóstico do papai",
+        "requiresConfirmation": False,
+    },
+    "templates.list": {
+        "label": "Ver templates seguros",
+        "requiresConfirmation": False,
+    },
 }
 
 
@@ -82,6 +90,10 @@ def local_actions_for(message: str) -> list[dict[str, Any]]:
         types.append("arduino.upload")
     if any(word in lower for word in ("serial", "monitor", "mensagem", "ver o que")):
         types.append("serial.open")
+    if any(word in lower for word in ("diagn", "papai", "status", "saúde", "saude")):
+        types.append("diagnostics.open")
+    if any(word in lower for word in ("template", "sketch", "exemplo", "motor")):
+        types.append("templates.list")
     if not types:
         types = ["arduino.board_list", "arduino.compile"]
     return normalize_actions([{"type": t} for t in types])
