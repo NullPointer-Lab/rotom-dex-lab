@@ -77,6 +77,16 @@ main {
 .version-label { font-size: .85rem; color: var(--text); overflow: hidden; }
 .version-item .mini { white-space: nowrap; }
 .code-preview { font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: .78rem; min-height: auto; max-height: 320px; white-space: pre; overflow: auto; margin: .4rem 0 0; }
+.spinner {
+  display: inline-block;
+  width: 1em; height: 1em;
+  vertical-align: -0.15em;
+  border: 2px solid rgba(255, 255, 255, .25);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: rotom-spin .7s linear infinite;
+}
+@keyframes rotom-spin { to { transform: rotate(360deg); } }
 .card {
   background: rgba(24, 27, 39, .94);
   border: 1px solid rgba(255,255,255,.08);

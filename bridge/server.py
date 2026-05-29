@@ -142,6 +142,7 @@ class ChatMultimodalRequest(BaseModel):
 class VibeRequest(BaseModel):
     instruction: str
     projectId: str | None = None
+    port: str | None = None
 
 
 class CodeRestoreRequest(BaseModel):
@@ -418,6 +419,8 @@ async def arduino_compile(req: CompileRequest):
 async def arduino_upload(req: UploadRequest):
     try:
         project = config.get_project(req.projectId)
+        if req.confirmed:
+            await _free_port_for_upload(req.port)
         return result_to_dict(
             await arduino.upload(project, req.port, req.confirmed, req.fqbn, req.sketchPath),
             "upload",
@@ -595,6 +598,21 @@ def _vibe_save_message(instruction: str) -> str:
     return f"Davi pediu: {' '.join(instruction.split())[:72]}"
 
 
+async def _detect_board_port() -> str | None:
+    """Best-effort: the single likely board port (the known CH340/ESP32)."""
+    result = await arduino.board_list(json_format=True)
+    if result.exit_code != 0:
+        return None
+    return _selected_board_port(simplify_board_list(result.stdout))
+
+
+async def _free_port_for_upload(port: str) -> None:
+    """Close any serial monitor this server holds on ``port`` so the upload can
+    take it (you can't flash while the monitor is open on the same port)."""
+    if serial_manager.close_port(port or ""):
+        await asyncio.sleep(0.4)  # let the OS release the handle before esptool opens it
+
+
 import re as _re
 
 _SECRET_ASSIGN = _re.compile(r'(?i)\b(password|senha|secret|api[_]?key|token)(\s*=\s*")([^"]+)(")')
@@ -691,13 +709,30 @@ async def code_vibe(req: VibeRequest):
     if compiled.exit_code == 0:
         save = codegen.commit_all(root, _vibe_save_message(req.instruction))
         extra = f" (instalei sozinho: {', '.join(installed)})" if installed else ""
+        # Rotom programa E entrega na placa automaticamente.
+        port = (req.port or "").strip() or await _detect_board_port()
+        upload = None
+        if port:
+            try:
+                await _free_port_for_upload(port)
+                up = await arduino.upload(project, port, confirmed=True)
+                upload = {"ok": up.exit_code == 0, "port": port, "raw": result_to_dict(up, "upload")}
+            except PolicyError as exc:
+                upload = {"ok": False, "port": port, "error": str(exc)}
+        if upload and upload["ok"]:
+            message = f"Pronto! Programei, testei e já enviei pro Zapp na {port} 🚀✅{extra}"
+        elif upload:
+            message = f"Programei e salvei ✅{extra}, mas não consegui enviar pra placa agora. Confere o cabo/porta e clica em 🚀 Enviar."
+        else:
+            message = f"Programei, testei e salvei ✅{extra}, mas não achei a placa pra enviar. Conecta o cabo USB, procura a placa e clica em 🚀 Enviar."
         payload = {
             "ok": True,
             "compileOk": True,
             "save": save,
             "applied": result.applied,
             "failed": result.failed,
-            "message": f"Pronto! Mudei, testei e salvei ✅{extra}. Agora clique em 🚀 Enviar pra colocar na placa.",
+            "upload": upload,
+            "message": message,
             "raw": result_to_dict(compiled, "compile"),
         }
         if installed:

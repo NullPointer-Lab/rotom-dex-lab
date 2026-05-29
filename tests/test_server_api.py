@@ -241,8 +241,12 @@ def test_vibe_applies_edit_commits_and_compiles(client, token, tmp_path, monkeyp
     async def fake_compile(proj, fqbn=None, sketch_path=None):
         return CommandResult(args=["arduino-cli", "compile"], exit_code=0, stdout="ok", stderr="")
 
+    async def no_port():
+        return None
+
     monkeypatch.setattr(server, "_request_code_edits", fake_edits)
     monkeypatch.setattr(server.arduino, "compile", fake_compile)
+    monkeypatch.setattr(server, "_detect_board_port", no_port)  # no board -> skip auto-upload
 
     res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda o nome para Davizinho"})
     assert res.status_code == 200
@@ -250,6 +254,42 @@ def test_vibe_applies_edit_commits_and_compiles(client, token, tmp_path, monkeyp
     assert body["ok"] is True and body["compileOk"] is True and body["save"]
     assert 'Davizinho' in sketch.read_text(encoding="utf-8")
     assert codegen.list_versions(str(tmp_path))  # a save was recorded
+
+
+def test_vibe_auto_uploads_after_compile(client, token, tmp_path, monkeypatch):
+    from bridge.runner import CommandResult
+
+    project, sketch = _vibe_project(tmp_path)
+    monkeypatch.setattr(server, "config", _FakeConfig(project))
+    monkeypatch.setenv("ROTOM_DEX_HERMES_URL", "http://agent.test/chat")
+    captured = {}
+
+    async def fake_edits(instruction, current_code, filename):
+        return VIBE_EDIT
+
+    async def fake_compile(proj, fqbn=None, sketch_path=None):
+        return CommandResult(["c"], 0, "ok", "")
+
+    async def fake_detect():
+        return "COM9"
+
+    async def fake_upload(proj, port, confirmed, fqbn=None, sketch_path=None):
+        captured["port"] = port
+        captured["confirmed"] = confirmed
+        return CommandResult(["u"], 0, "Uploaded", "")
+
+    monkeypatch.setattr(server, "_request_code_edits", fake_edits)
+    monkeypatch.setattr(server.arduino, "compile", fake_compile)
+    monkeypatch.setattr(server, "_detect_board_port", fake_detect)
+    monkeypatch.setattr(server.arduino, "upload", fake_upload)
+
+    res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["upload"] and body["upload"]["ok"] is True and body["upload"]["port"] == "COM9"
+    assert captured == {"port": "COM9", "confirmed": True}  # uploaded automatically
+    assert "enviei" in body["message"].lower()
 
 
 def test_vibe_reverts_when_change_breaks_a_working_build(client, token, tmp_path, monkeypatch):
@@ -294,8 +334,12 @@ def test_vibe_saves_anyway_when_project_cannot_build_here(client, token, tmp_pat
     async def fake_compile(proj, fqbn=None, sketch_path=None):
         return CommandResult(args=["c"], exit_code=1, stdout="", stderr="fatal error: Lib.h: No such file")
 
+    async def fake_search(query):
+        return CommandResult(args=["s"], exit_code=0, stdout='{"libraries":[]}', stderr="")
+
     monkeypatch.setattr(server, "_request_code_edits", fake_edits)
     monkeypatch.setattr(server.arduino, "compile", fake_compile)
+    monkeypatch.setattr(server.arduino, "lib_search", fake_search)  # auto-heal finds nothing -> stays offline
 
     res = client.post("/api/code/vibe", headers={"X-Rotom-Token": token}, json={"instruction": "muda o nome"})
     assert res.status_code == 200

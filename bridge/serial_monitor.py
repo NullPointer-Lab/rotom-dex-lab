@@ -111,6 +111,16 @@ class SerialManager:
                 pass
         return True
 
+    def close_port(self, port: str) -> bool:
+        """Close any open session on ``port`` (so an upload can take the port)."""
+        target = (port or "").upper().strip()
+        ids = [sid for sid, sess in self.sessions.items() if (sess.port or "").upper() == target]
+        closed = False
+        for sid in ids:
+            if self.close(sid):
+                closed = True
+        return closed
+
     def clear(self, session_id: str) -> bool:
         session = self.sessions.get(session_id)
         if not session:

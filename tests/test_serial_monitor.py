@@ -4,6 +4,14 @@ from bridge.policy import PolicyError
 from bridge.serial_monitor import SerialError, SerialManager
 
 
+def test_close_port_frees_sessions_for_upload():
+    mgr = SerialManager(fake=True)
+    mgr.open("COM9", 115200)
+    assert mgr.close_port("com9") is True  # case-insensitive, closes the open session
+    assert mgr.sessions == {}
+    assert mgr.close_port("COM9") is False  # nothing left to close
+
+
 class FakeSerial:
     """Stand-in for serial.Serial; never touches real hardware."""
 

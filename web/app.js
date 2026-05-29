@@ -163,7 +163,7 @@ function setStatus(message, raw) {
 }
 
 async function showResult(title, promise, action) {
-  deviceStatus.textContent = `${title}...`;
+  deviceStatus.innerHTML = `<span class="spinner"></span> ${title}…`;
   statusBox.textContent = `${title}...`;
   try {
     const data = await promise;
@@ -725,16 +725,22 @@ if (vibeForm) {
     const sendBtn = vibeForm.querySelector('button:not([type="button"])');
     vibeInput.disabled = true;
     if (sendBtn) sendBtn.disabled = true;
-    setVibeStatus('🛠️ Rotom está programando e testando… pode levar um tempinho.', null);
+    vibeStatus.classList.remove('hidden', 'good', 'bad');
+    vibeStatus.innerHTML = '<span class="spinner"></span> 🛠️ Rotom está programando, testando e enviando pra placa… pode levar um tempinho.';
     appendChat('user', `✨ ${instruction}`);
     try {
-      const data = await api('/api/code/vibe', { method: 'POST', body: JSON.stringify({ instruction }) });
+      const data = await api('/api/code/vibe', {
+        method: 'POST',
+        body: JSON.stringify({ instruction, port: portInput.value.trim() || null }),
+      });
       const msg = data.message || (data.ok ? 'Pronto!' : 'Não deu certo.');
       setVibeStatus(msg, data.ok ? 'good' : 'bad');
       appendCard(msg, data.raw || { ok: !!data.ok, message: msg });
       if (data.ok) {
         vibeInput.value = '';
-        lastResult = { action: 'compile', ok: true, message: msg };
+        lastResult = data.upload && data.upload.ok
+          ? { action: 'upload', ok: true, message: msg }
+          : { action: 'compile', ok: true, message: msg };
         updateGuide();
       }
       await loadVersions();
