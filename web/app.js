@@ -81,7 +81,12 @@ function renderDevices(data) {
       option.textContent = device.label || `${device.name} em ${device.port}`;
       deviceSelect.appendChild(option);
     }
-    selectPort('');
+    if (data.selectedPort) {
+      deviceSelect.value = data.selectedPort;
+      selectPort(data.selectedPort);
+    } else {
+      selectPort('');
+    }
     return;
   }
 
