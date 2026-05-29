@@ -36,6 +36,25 @@ def test_port_not_found():
     assert "porta" in msg.lower()
 
 
+def test_missing_library_is_not_reported_as_missing_port():
+    # Regression: a compile "No such file" (missing #include) must NOT be
+    # translated to "não achei a porta da placa".
+    msg = friendly_arduino_message(
+        _result(1, "ZappRobotFinal.ino:1:10: fatal error: Adafruit_GFX.h: No such file or directory"),
+        "compile",
+    )
+    assert "biblioteca" in msg.lower()
+    assert "porta" not in msg.lower()
+
+
+def test_missing_port_windows():
+    msg = friendly_arduino_message(
+        _result(1, 'Error: can\'t open device "COM9": The system cannot find the file specified.'),
+        "upload",
+    )
+    assert "porta" in msg.lower()
+
+
 def test_compile_error():
     msg = friendly_arduino_message(_result(1, "sketch.ino:5:3: error: expected ';'"), "compile")
     assert "errinho" in msg or "errin" in msg

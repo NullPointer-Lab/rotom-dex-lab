@@ -55,9 +55,27 @@ def friendly_arduino_message(result: CommandResult, action: str = "comando") -> 
             "serial e tente de novo."
         )
 
+    # Missing library/header in the sketch (e.g. Adafruit_GFX.h, TFT_RoboEyes.h).
+    # This must come BEFORE the port check: a "No such file" from a #include is a
+    # missing library, NOT a missing serial port — confusing the two made Rotom
+    # wrongly say "não achei a porta" while the board was connected fine.
+    if "no such file or directory" in combined and ("fatal error" in combined or ".h" in combined):
+        return (
+            "Falta uma biblioteca que o projeto usa. Veja nos detalhes para o papai qual arquivo "
+            ".h não foi encontrado e instale essa biblioteca."
+        )
+
     if any(
         phrase in combined
-        for phrase in ("no such file", "port not found", "no device found", "cannot find the port", "porta inválida")
+        for phrase in (
+            "port not found",
+            "no device found",
+            "cannot find the port",
+            "no such port",
+            "cannot find the file specified",
+            "can't open device",
+            "porta inválida",
+        )
     ):
         return "Não achei a porta da placa. Conecte o cabo USB e procure a placa de novo."
 
