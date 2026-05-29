@@ -6,6 +6,21 @@ if ((Test-Path $Updater) -and $env:ROTOM_DEX_SKIP_UPDATE -ne "1") {
   powershell -ExecutionPolicy Bypass -File $Updater
 }
 
+# Carrega configuração local opcional e NÃO versionada (config\rotom.local.env):
+# ex. ROTOM_DEX_HERMES_URL / ROTOM_DEX_HERMES_TOKEN para ligar o chat ao agente Hermes.
+$LocalEnv = Join-Path $ProjectRoot "config\rotom.local.env"
+if (Test-Path $LocalEnv) {
+  foreach ($line in Get-Content $LocalEnv) {
+    $trimmed = $line.Trim()
+    if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+    $kv = $trimmed -split "=", 2
+    if ($kv.Count -eq 2 -and $kv[0].Trim()) {
+      Set-Item -Path ("Env:" + $kv[0].Trim()) -Value $kv[1].Trim()
+    }
+  }
+  Write-Host "[Rotom Dex] Config local carregada de config\rotom.local.env" -ForegroundColor DarkGray
+}
+
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $Port = if ($env:ROTOM_DEX_PORT) { $env:ROTOM_DEX_PORT } else { "8765" }
 $BindHost = if ($env:ROTOM_DEX_BIND_HOST) { $env:ROTOM_DEX_BIND_HOST } else { "0.0.0.0" }

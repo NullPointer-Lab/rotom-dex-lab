@@ -55,14 +55,16 @@ O launcher cria o `.venv`, instala pacotes Python, valida que `fastapi`/`uvicorn
 
 ## Variáveis de ambiente
 
-Todas são opcionais; o app funciona offline e com PIN gerado automaticamente se nenhuma for definida.
+Todas são opcionais; o app funciona offline e com PIN gerado automaticamente se nenhuma for definida. No Windows do Davi, a forma mais simples de fixar a configuração do agente é criar `config/rotom.local.env` (não versionado) com linhas `CHAVE=valor` — o `Start-RotomDexLab.ps1` carrega esse arquivo automaticamente.
 
 | Variável | Padrão | Para que serve |
 | --- | --- | --- |
 | `ROTOM_DEX_SESSION_TOKEN` | gerado a cada início | PIN/token exigido nas ações da LAN. Defina para fixar um PIN estável. |
 | `ROTOM_DEX_HERMES_URL` | (vazio) | Endpoint HTTP do cérebro online (Hermes/Rotom Dex). Sem ele, o chat fica em **modo offline**. |
 | `ROTOM_DEX_HERMES_TOKEN` | (vazio) | Bearer token enviado ao backend Hermes, se ele exigir. |
-| `ROTOM_DEX_HERMES_TIMEOUT_SECONDS` | `20` | Tempo máximo de espera pela resposta do Hermes antes de cair no modo offline. |
+| `ROTOM_DEX_HERMES_TIMEOUT_SECONDS` | `20` | Tempo máximo de espera pela resposta do Hermes. Use `120` quando apontar para o agente Hermes (a resposta do agente é mais lenta que um modelo cru). |
+| `ROTOM_DEX_VISION_URL` | (usa `ROTOM_DEX_HERMES_URL`) | Endpoint do chat com imagem. Por padrão reusa o mesmo agente do texto. |
+| `ROTOM_DEX_VISION_TOKEN` | (usa `ROTOM_DEX_HERMES_TOKEN`) | Bearer token do endpoint de imagem. |
 | `ROTOM_DEX_FAKE_SERIAL` | (desligado) | Se `=1`, o monitor serial gera dados de **simulação** (dev), claramente rotulados na UI. |
 | `ROTOM_DEX_PORT` | `8765` | Porta do servidor. |
 | `ROTOM_DEX_BIND_HOST` | `0.0.0.0` | Interface de bind. Use `127.0.0.1` para restringir só a este computador. |
@@ -86,6 +88,11 @@ Isto é uma proteção doméstica simples, não autenticação corporativa: sem 
 - **Offline / falha:** sem URL configurada, ou se o backend demorar/errar, o chat **diz claramente que está offline** e ainda sugere ações locais seguras (procurar placa, compilar, enviar, abrir serial) com base nas palavras da mensagem. Ele nunca finge que o agente real respondeu.
 - Ações vindas do backend são **normalizadas e validadas** no servidor: tipos desconhecidos são descartados e a confirmação de upload nunca pode ser desligada por um backend remoto.
 - O modo offline agora também pode sugerir diagnóstico do papai e templates seguros quando o Davi mencionar status, diagnóstico, sketch, exemplo ou motor.
+- **Colar imagem:** o Davi pode colar (Ctrl+V), arrastar ou anexar uma foto/print no chat (PNG/JPG/WEBP/GIF, até 5 MB). A imagem vai para o endpoint `/api/chat/multimodal`. Hoje o agente Hermes via `hermes -z` ainda não enxerga fotos, então o Rotom responde de forma honesta pedindo a descrição; a UI e a validação já estão prontas para quando um canal com visão for ligado.
+
+## Cérebro do chat: agente Hermes `rotom-dex`
+
+O chat do Davi é respondido por um **agente Hermes dedicado** (profile `rotom-dex`) no servidor Hermes. Como o Hermes não expõe um endpoint HTTP síncrono para o agente, há um shim minúsculo em [`hermes-agent/`](hermes-agent/README.md) que roda `hermes -z --profile rotom-dex` e devolve `{reply, suggestedActions}`. Veja as instruções de instalação (serviço systemd de usuário, token, persistência) nesse diretório. No bridge, basta apontar `ROTOM_DEX_HERMES_URL` para `http://<ip-do-hermes>:8770/chat` e definir `ROTOM_DEX_HERMES_TOKEN`.
 
 ## Diagnóstico do papai
 
@@ -166,7 +173,7 @@ uvicorn bridge.server:app --host 0.0.0.0 --port 8765
 
 ## Próximas etapas
 
-- Configurar e testar um backend real em `ROTOM_DEX_HERMES_URL` para o perfil Hermes `rotom-dex`.
-- Validar o fluxo completo no Windows real do Davi com a ESP32 conectada: detectar placa, compilar, enviar e ler serial.
+- **Visão de verdade:** ligar um canal multimodal para o chat com imagem (ex.: `hermes proxy` com um provedor com visão autenticado), já que `hermes -z` não recebe imagem. A UI/validação de imagem já estão prontas.
+- Validar o fluxo completo no Windows real do Davi com a ESP32 conectada: detectar placa, compilar, enviar e ler serial. (Compile/upload já validados em hardware via bridge.)
 - Evoluir missões para edição/registro de progresso pela UI, mantendo confirmação adulta para mudanças sensíveis.
 - Adicionar leitura/patch de arquivos com diff e confirmação, se o Rotom for ganhar ajuda direta no código do projeto.
