@@ -3,13 +3,21 @@ import pytest
 
 from bridge.hermes_client import ERROR_REPLY, OFFLINE_REPLY, HermesClient, local_reply_for
 
+PROHIBITED_LOCAL_REPLY_TERMS = ("modo local", "não converso", "ia completa")
+
+
+def assert_natural_local_reply(reply: str):
+    lowered = reply.lower()
+    for term in PROHIBITED_LOCAL_REPLY_TERMS:
+        assert term not in lowered
+
 
 @pytest.mark.asyncio
 async def test_offline_when_unconfigured():
     client = HermesClient(url=None)
     reply = await client.send_message("quero compilar", {})
     assert reply.offline is True
-    assert "testar/compilar" in reply.reply
+    assert "Testar código" in reply.reply
     assert any(a["type"] == "arduino.compile" for a in reply.suggested_actions)
 
 
@@ -20,12 +28,27 @@ async def test_offline_greeting_is_friendly_and_not_generic():
     assert reply.offline is True
     assert reply.reply.startswith("Oi, Davi!")
     assert reply.reply != OFFLINE_REPLY
+    assert_natural_local_reply(reply.reply)
+    assert "Começar" in reply.reply
     assert any(a["type"] == "arduino.board_list" for a in reply.suggested_actions)
 
 
 def test_local_reply_for_known_intents():
-    assert "diagnóstico do papai" in local_reply_for("status do papai")
-    assert "templates seguros" in local_reply_for("quero exemplo de motor")
+    replies = [
+        local_reply_for("status do papai"),
+        local_reply_for("quero exemplo de motor"),
+        local_reply_for("Rotom, procura minha placa"),
+        local_reply_for("Rotom, testa meu projeto"),
+        local_reply_for("abre o monitor serial"),
+    ]
+    assert "diagnóstico do papai" in replies[0].lower()
+    assert "templates seguros" in replies[1]
+    assert "procurar" in replies[2].lower()
+    assert "testar" in replies[3].lower()
+    assert "serial" in replies[4].lower()
+    for reply in replies:
+        assert_natural_local_reply(reply)
+    assert_natural_local_reply(OFFLINE_REPLY)
     assert local_reply_for("missão aleatória") == OFFLINE_REPLY
 
 
