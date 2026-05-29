@@ -105,9 +105,34 @@ summary { cursor: pointer; }
 .image-preview img { height: 48px; width: 48px; object-fit: cover; border-radius: 8px; }
 .image-name { flex: 1; color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-log.dragover { outline: 2px dashed var(--accent-2); outline-offset: -4px; }
-.msg { margin: .45rem 0; line-height: 1.35; }
-.msg.user { color: var(--accent-2); }
-.msg.agent { color: var(--ok); }
+.chat-log { display: flex; flex-direction: column; gap: .5rem; }
+.msg { display: flex; gap: .5rem; align-items: flex-start; margin: 0; line-height: 1.35; }
+.msg .avatar {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 1.05rem;
+  background: var(--card-2);
+}
+.msg .bubble {
+  background: var(--card-2);
+  border-radius: 14px;
+  padding: .5rem .75rem;
+  max-width: 85%;
+}
+.msg.user { flex-direction: row-reverse; }
+.msg.user .bubble { background: rgba(72, 209, 255, .18); }
+.msg.agent .bubble { background: rgba(72, 224, 138, .12); }
+.msg.thinking .bubble { color: var(--muted); font-style: italic; }
+.dots::after { content: ''; animation: rotom-dots 1.2s steps(4, end) infinite; }
+@keyframes rotom-dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+input:disabled, button:disabled { opacity: .55; cursor: default; filter: none; }
 .badge {
   font-size: .8rem;
   font-weight: 600;

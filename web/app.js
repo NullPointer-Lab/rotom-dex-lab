@@ -40,12 +40,75 @@ function pretty(obj) {
   return JSON.stringify(obj, null, 2);
 }
 
-function appendChat(role, text) {
-  const item = document.createElement('div');
-  item.className = `msg ${role}`;
-  item.textContent = `${role === 'user' ? 'Davi' : 'Rotom Dex'}: ${text}`;
-  chatLog.appendChild(item);
+const CHAT_KEY = 'rotomDexChatHistory';
+const CHAT_MAX = 60;
+
+function chatHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveChatHistory(history) {
+  try {
+    localStorage.setItem(CHAT_KEY, JSON.stringify(history.slice(-CHAT_MAX)));
+  } catch {
+    /* localStorage cheia ou indisponível: seguimos sem persistir */
+  }
+}
+
+function renderMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = `msg ${role}`;
+  const avatar = document.createElement('span');
+  avatar.className = 'avatar';
+  avatar.textContent = role === 'user' ? '🧒' : '⚡';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  chatLog.appendChild(row);
   chatLog.scrollTop = chatLog.scrollHeight;
+  return row;
+}
+
+function appendChat(role, text) {
+  renderMessage(role, text);
+  const history = chatHistory();
+  history.push({ role, text });
+  saveChatHistory(history);
+}
+
+function restoreChat() {
+  const history = chatHistory();
+  for (const message of history) renderMessage(message.role, message.text);
+  return history.length > 0;
+}
+
+function clearChat() {
+  saveChatHistory([]);
+  chatLog.innerHTML = '';
+  appendChat('agent', 'Rotom! Conversa nova ⚡ Clique em Começar ou me diga o que você quer fazer.');
+}
+
+let thinkingEl = null;
+function setChatBusy(busy) {
+  chatInput.disabled = busy;
+  const sendBtn = chatForm.querySelector('button:not([type="button"])');
+  if (sendBtn) sendBtn.disabled = busy;
+  if (busy && !thinkingEl) {
+    thinkingEl = document.createElement('div');
+    thinkingEl.className = 'msg agent thinking';
+    thinkingEl.innerHTML = '<span class="avatar">⚡</span><div class="bubble">Rotom está pensando<span class="dots"></span></div>';
+    chatLog.appendChild(thinkingEl);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  } else if (!busy && thinkingEl) {
+    thinkingEl.remove();
+    thinkingEl = null;
+  }
 }
 
 function appendCard(message, data) {
@@ -362,6 +425,7 @@ chatForm.onsubmit = async (event) => {
   appendChat('user', image ? `${message} 📷 ${image.name}`.trim() : message);
   suggestedActions.innerHTML = '';
   clearPendingImage();
+  setChatBusy(true);
   const context = { selectedPort: portInput.value.trim() || null, lastResult, boardChoices };
   try {
     const data = image
@@ -379,6 +443,9 @@ chatForm.onsubmit = async (event) => {
     renderSuggestedActions(data.suggestedActions);
   } catch (err) {
     appendChat('agent', `Ops! ${err.message}`);
+  } finally {
+    setChatBusy(false);
+    chatInput.focus();
   }
 };
 
@@ -482,7 +549,11 @@ if (!TOKEN) {
   setStatus(message, { ok: false, error: 'token_missing' });
   if (templateList) templateList.textContent = 'Abra com ?token=... para carregar os templates seguros.';
 } else {
-  appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
+  const chatClearBtn = document.querySelector('#chatClearBtn');
+  if (chatClearBtn) chatClearBtn.onclick = clearChat;
+  if (!restoreChat()) {
+    appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex ⚡ Clique em Começar para eu procurar sua placa, ou me mande uma mensagem (pode colar foto!).');
+  }
   loadMissions();
   loadTemplates();
 }
