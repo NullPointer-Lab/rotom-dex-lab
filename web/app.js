@@ -17,13 +17,22 @@ const serialInput = document.querySelector('#serialInput');
 const serialSendBtn = document.querySelector('#serialSendBtn');
 const serialClearBtn = document.querySelector('#serialClearBtn');
 const templateList = document.querySelector('#templateList');
+const imagePreview = document.querySelector('#imagePreview');
+const imageThumb = document.querySelector('#imageThumb');
+const imageName = document.querySelector('#imageName');
+const imageRemoveBtn = document.querySelector('#imageRemoveBtn');
+const imageAttachBtn = document.querySelector('#imageAttachBtn');
+const imageInput = document.querySelector('#imageInput');
 
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 let serialWs = null;
 let serialSessionId = null;
 let lastResult = null;
 let boardChoices = null;
+let pendingImage = null; // { dataUrl, name }
 
 const MISSION_ICON = { done: '✅', doing: '🟡', todo: '⬜' };
 
@@ -272,21 +281,98 @@ function renderSuggestedActions(actions) {
   }
 }
 
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Não consegui ler a imagem.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function clearPendingImage() {
+  pendingImage = null;
+  imageThumb.removeAttribute('src');
+  imageName.textContent = '';
+  imagePreview.classList.add('hidden');
+  imageInput.value = '';
+}
+
+async function setPendingImageFromFile(file) {
+  if (!file) return;
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    appendChat('agent', 'Rotom! Só consigo ver imagens PNG, JPG, WEBP ou GIF.');
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    appendChat('agent', 'Rotom! Essa imagem é grande demais (máximo 5 MB). Tente uma foto menor.');
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataURL(file);
+    pendingImage = { dataUrl, name: file.name || 'foto colada' };
+    imageThumb.src = dataUrl;
+    imageName.textContent = pendingImage.name;
+    imagePreview.classList.remove('hidden');
+  } catch (err) {
+    appendChat('agent', `Ops! ${err.message}`);
+  }
+}
+
+imageAttachBtn.onclick = () => imageInput.click();
+imageInput.onchange = () => setPendingImageFromFile(imageInput.files[0]);
+imageRemoveBtn.onclick = clearPendingImage;
+
+chatInput.addEventListener('paste', (event) => {
+  const items = event.clipboardData && event.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        setPendingImageFromFile(file);
+        event.preventDefault();
+      }
+      break;
+    }
+  }
+});
+
+['dragenter', 'dragover'].forEach((evt) =>
+  chatLog.addEventListener(evt, (e) => {
+    e.preventDefault();
+    chatLog.classList.add('dragover');
+  }));
+['dragleave', 'drop'].forEach((evt) =>
+  chatLog.addEventListener(evt, (e) => {
+    e.preventDefault();
+    chatLog.classList.remove('dragover');
+  }));
+chatLog.addEventListener('drop', (e) => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) setPendingImageFromFile(file);
+});
+
 chatForm.onsubmit = async (event) => {
   event.preventDefault();
   const message = chatInput.value.trim();
-  if (!message) return;
+  const image = pendingImage;
+  if (!message && !image) return;
   chatInput.value = '';
-  appendChat('user', message);
+  appendChat('user', image ? `${message} 📷 ${image.name}`.trim() : message);
   suggestedActions.innerHTML = '';
+  clearPendingImage();
+  const context = { selectedPort: portInput.value.trim() || null, lastResult, boardChoices };
   try {
-    const data = await api('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        message,
-        context: { selectedPort: portInput.value.trim() || null, lastResult, boardChoices },
-      }),
-    });
+    const data = image
+      ? await api('/api/chat/multimodal', {
+          method: 'POST',
+          body: JSON.stringify({ message, imageDataUrl: image.dataUrl, context }),
+        })
+      : await api('/api/chat', {
+          method: 'POST',
+          body: JSON.stringify({ message, context }),
+        });
     appendChat('agent', data.reply);
     chatStatus.textContent = data.offline ? 'Rotom em modo local' : 'Rotom online';
     chatStatus.classList.toggle('offline', !!data.offline);

@@ -91,6 +91,20 @@ summary { cursor: pointer; }
 #chatForm { display: flex; gap: .5rem; margin-top: .75rem; }
 #chatForm input { margin: 0; }
 #chatForm button { margin: 0; }
+#imageAttachBtn { background: var(--card-2); padding: .7rem .85rem; }
+.image-preview {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  background: var(--card-2);
+  border: 1px solid rgba(72, 209, 255, .35);
+  border-radius: 12px;
+  padding: .4rem .6rem;
+  margin-top: .5rem;
+}
+.image-preview img { height: 48px; width: 48px; object-fit: cover; border-radius: 8px; }
+.image-name { flex: 1; color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-log.dragover { outline: 2px dashed var(--accent-2); outline-offset: -4px; }
 .msg { margin: .45rem 0; line-height: 1.35; }
 .msg.user { color: var(--accent-2); }
 .msg.agent { color: var(--ok); }

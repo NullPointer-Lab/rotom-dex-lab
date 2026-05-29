@@ -20,6 +20,7 @@ from .policy import PolicyError, _is_windows_style
 from .serial_monitor import SerialError, SerialManager
 from .sketch_templates import create_template_file, render_template, template_catalog
 from .translate import core_installed, friendly_arduino_message
+from .vision import ImageError, VisionClient, parse_image_data_url
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "web"
@@ -74,6 +75,7 @@ config = load_config()
 arduino = ArduinoService()
 serial_manager = SerialManager()
 hermes = HermesClient()
+vision = VisionClient()
 auth = SessionAuth()
 
 
@@ -124,6 +126,13 @@ class TemplateCreateRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     projectId: str | None = None
+    context: dict[str, Any] = {}
+
+
+class ChatMultimodalRequest(BaseModel):
+    message: str = ""
+    projectId: str | None = None
+    imageDataUrl: str | None = None
     context: dict[str, Any] = {}
 
 
@@ -438,4 +447,40 @@ async def chat(req: ChatRequest):
         "reply": reply.reply,
         "suggestedActions": reply.suggested_actions,
         "offline": reply.offline,
+    }
+
+
+@app.post("/api/chat/multimodal", dependencies=[Depends(require_token)])
+async def chat_multimodal(req: ChatMultimodalRequest):
+    try:
+        project = config.get_project(req.projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+
+    has_image = bool(req.imageDataUrl)
+    if has_image:
+        # Validate type/size up front; the bytes stay in memory and are never
+        # written to disk or logged.
+        try:
+            parse_image_data_url(req.imageDataUrl)
+        except ImageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not (req.message.strip() or has_image):
+        raise HTTPException(status_code=400, detail="Escreva uma mensagem ou anexe uma imagem.")
+
+    context = {
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "sketch": project.sketch,
+            "defaultFqbn": project.defaultFqbn,
+        },
+        **req.context,
+    }
+    reply = await vision.describe(req.message, req.imageDataUrl if has_image else None, context)
+    return {
+        "reply": reply.reply,
+        "suggestedActions": reply.suggested_actions,
+        "offline": reply.offline,
+        "hasImage": has_image,
     }

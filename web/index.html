@@ -42,10 +42,18 @@
       </h2>
       <p class="hint">Pode escrever como você fala. Ex: “Rotom, testa meu projeto”.</p>
       <div id="chatLog" class="chat-log"></div>
+      <div id="imagePreview" class="image-preview hidden">
+        <img id="imageThumb" alt="prévia da imagem" />
+        <span id="imageName" class="image-name"></span>
+        <button type="button" id="imageRemoveBtn" class="mini" title="Tirar a imagem">✕</button>
+      </div>
       <form id="chatForm">
-        <input id="chatInput" placeholder="Digite sua missão aqui" autocomplete="off" />
+        <button type="button" id="imageAttachBtn" title="Anexar uma foto ou print">📎</button>
+        <input id="chatInput" placeholder="Escreva ou cole uma foto (Ctrl+V)" autocomplete="off" />
         <button>Enviar</button>
       </form>
+      <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+      <p class="hint">Dica: você pode colar (Ctrl+V) ou arrastar uma foto/print para o Rotom ver.</p>
       <div id="suggestedActions"></div>
     </section>
 

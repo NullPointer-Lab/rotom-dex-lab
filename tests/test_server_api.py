@@ -47,6 +47,7 @@ def test_health_is_open_without_token(client):
         ("post", "/api/serial/clear", {"sessionId": "serial-COM5-115200"}),
         ("post", "/api/serial/write", {"sessionId": "serial-COM5-115200", "text": "ping"}),
         ("post", "/api/chat", {"message": "oi"}),
+        ("post", "/api/chat/multimodal", {"message": "oi"}),
     ],
 )
 def test_action_endpoints_reject_missing_token(client, method, path, payload):
@@ -134,6 +135,55 @@ def test_board_choices_never_empty_when_ports_detected(client, token, monkeypatc
     # Mensagem amigável aponta COM9 e nunca diz que não achou nada.
     assert "COM9" in body["message"]
     assert "Não achei nenhuma placa" not in body["message"]
+
+
+# --- multimodal chat endpoint (image paste) ---------------------------------
+
+PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+)
+
+
+def test_multimodal_offline_reply_with_image(client, token):
+    res = client.post(
+        "/api/chat/multimodal",
+        headers={"X-Rotom-Token": token},
+        json={"message": "o que é isso?", "imageDataUrl": PNG_DATA_URL},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["hasImage"] is True
+    assert body["offline"] is True  # nenhum provedor de visão configurado por padrão
+    assert body["reply"]
+    # nunca executa ação sozinho: o endpoint só sugere botões seguros.
+    for action in body["suggestedActions"]:
+        assert action["type"] in {
+            "arduino.board_list",
+            "arduino.compile",
+            "arduino.upload",
+            "serial.open",
+            "diagnostics.open",
+            "templates.list",
+        }
+
+
+def test_multimodal_rejects_invalid_image(client, token):
+    res = client.post(
+        "/api/chat/multimodal",
+        headers={"X-Rotom-Token": token},
+        json={"message": "olha", "imageDataUrl": "data:application/pdf;base64,aGk="},
+    )
+    assert res.status_code == 400
+
+
+def test_multimodal_requires_message_or_image(client, token):
+    res = client.post(
+        "/api/chat/multimodal",
+        headers={"X-Rotom-Token": token},
+        json={"message": "   "},
+    )
+    assert res.status_code == 400
 
 
 # --- chat context enrichment (Phase 2) --------------------------------------
