@@ -9,13 +9,38 @@ import httpx
 from .actions import local_actions_for, normalize_actions
 
 OFFLINE_REPLY = (
-    "Estou offline agora, mas ainda consigo usar os botões para procurar placa, "
-    "compilar, enviar e abrir serial."
+    "Estou em modo local agora. Posso procurar placa, testar o código, enviar para a placa, "
+    "abrir serial, rodar o diagnóstico do papai ou mostrar templates seguros pelos botões abaixo."
 )
 ERROR_REPLY = (
     "Tive um problema para falar com o meu cérebro online agora, mas ainda posso "
     "te ajudar com os botões aqui embaixo."
 )
+
+
+def local_reply_for(message: str) -> str:
+    """Return a friendly local-mode reply instead of repeating one generic offline line."""
+    lower = message.lower().strip()
+    compact = lower.strip("!?. ,;:-")
+    if compact in {"oi", "ola", "olá", "e ai", "e aí", "bom dia", "boa tarde", "boa noite"}:
+        return (
+            "Oi, Davi! Estou em modo local, então não converso como IA completa agora, "
+            "mas consigo te guiar pelos botões: procurar placa, testar código, abrir serial, "
+            "diagnóstico do papai e templates seguros."
+        )
+    if any(word in lower for word in ("diagn", "papai", "status", "saúde", "saude")):
+        return "Modo local ativado: posso abrir o diagnóstico do papai para mostrar placa, Arduino CLI, sketch e serial."
+    if any(word in lower for word in ("template", "sketch", "exemplo", "motor")):
+        return "Modo local ativado: posso mostrar templates seguros de sketch para você começar sem mexer em comandos perigosos."
+    if any(word in lower for word in ("placa", "porta", "conect", "achar", "procur")):
+        return "Modo local ativado: posso procurar a placa conectada e sugerir a porta certa para usar."
+    if any(word in lower for word in ("compil", "testa", "test", "build", "erro")):
+        return "Modo local ativado: posso testar/compilar o projeto e mostrar o erro de um jeito mais fácil de entender."
+    if any(word in lower for word in ("upload", "enviar", "gravar", "subir", "manda")):
+        return "Modo local ativado: posso enviar para a placa depois que você confirmar a porta certa."
+    if any(word in lower for word in ("serial", "monitor", "mensagem", "ver o que")):
+        return "Modo local ativado: posso abrir o monitor serial para ver o que a placa está falando."
+    return OFFLINE_REPLY
 
 
 @dataclass
@@ -59,7 +84,7 @@ class HermesClient:
     async def send_message(self, message: str, context: dict[str, Any]) -> HermesReply:
         if not self.configured:
             return HermesReply(
-                reply=OFFLINE_REPLY,
+                reply=local_reply_for(message),
                 suggested_actions=local_actions_for(message),
                 offline=True,
             )

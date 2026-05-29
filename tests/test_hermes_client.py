@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from bridge.hermes_client import ERROR_REPLY, OFFLINE_REPLY, HermesClient
+from bridge.hermes_client import ERROR_REPLY, OFFLINE_REPLY, HermesClient, local_reply_for
 
 
 @pytest.mark.asyncio
@@ -9,8 +9,24 @@ async def test_offline_when_unconfigured():
     client = HermesClient(url=None)
     reply = await client.send_message("quero compilar", {})
     assert reply.offline is True
-    assert reply.reply == OFFLINE_REPLY
+    assert "testar/compilar" in reply.reply
     assert any(a["type"] == "arduino.compile" for a in reply.suggested_actions)
+
+
+@pytest.mark.asyncio
+async def test_offline_greeting_is_friendly_and_not_generic():
+    client = HermesClient(url=None)
+    reply = await client.send_message("Oi", {})
+    assert reply.offline is True
+    assert reply.reply.startswith("Oi, Davi!")
+    assert reply.reply != OFFLINE_REPLY
+    assert any(a["type"] == "arduino.board_list" for a in reply.suggested_actions)
+
+
+def test_local_reply_for_known_intents():
+    assert "diagnóstico do papai" in local_reply_for("status do papai")
+    assert "templates seguros" in local_reply_for("quero exemplo de motor")
+    assert local_reply_for("missão aleatória") == OFFLINE_REPLY
 
 
 @pytest.mark.asyncio

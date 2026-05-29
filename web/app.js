@@ -283,7 +283,7 @@ chatForm.onsubmit = async (event) => {
       }),
     });
     appendChat('agent', data.reply);
-    chatStatus.textContent = data.offline ? 'Rotom offline (modo local)' : 'Rotom online';
+    chatStatus.textContent = data.offline ? 'Rotom em modo local' : 'Rotom online';
     chatStatus.classList.toggle('offline', !!data.offline);
     renderSuggestedActions(data.suggestedActions);
   } catch (err) {
