@@ -74,11 +74,33 @@ serve para o chat com **imagem** (o bridge reusa `ROTOM_DEX_HERMES_URL`/`TOKEN`)
 | `ROTOM_AGENT_TIMEOUT` | `150` | Timeout por requisição ao agente, em segundos. |
 | `HERMES_BIN` | `~/.local/bin/hermes` | Caminho do CLI hermes. |
 
-## Limitação conhecida — imagens
+## Ligar a visão (chat com imagem)
 
-O canal `hermes -z` não tem entrada multimodal nativa, então o agente **ainda não
-enxerga fotos** por aqui. Quando uma imagem é anexada, o shim responde de forma
-honesta ("ainda não consigo enxergar fotos") em vez de fingir. Para visão de
-verdade, é preciso um canal multimodal (ex.: `hermes proxy` com um provedor com
-visão autenticado, ou um endpoint compatível com OpenAI) — a UI e a validação de
-imagem já estão prontas para isso.
+O canal `hermes -z` não tem entrada multimodal, então **texto vai pelo agente** e
+**imagem vai pelo `hermes proxy`** (endpoint compatível com OpenAI, com um modelo
+de visão). Enquanto `ROTOM_AGENT_VISION_MODEL` estiver vazio, uma foto anexada
+recebe uma resposta honesta ("ainda não consigo enxergar fotos") — nunca fingimos.
+
+Para ligar de verdade (no Hermes):
+
+```bash
+# 1. Autentique um provedor com visão (xAI Grok tem visão). Fluxo OAuth interativo.
+hermes login --provider xai-oauth
+
+# 2. Suba o proxy OpenAI-compat (fica em 127.0.0.1:8645 por padrão).
+#    Deixe rodando (nohup/serviço) — ele só escuta em localhost; quem fica exposto
+#    na LAN é só o shim (com token). NÃO use --host 0.0.0.0 no proxy.
+nohup hermes proxy start --provider xai >~/rotom-agent/proxy.log 2>&1 &
+
+# 3. Descubra o nome do modelo de visão disponível e ligue no shim:
+curl -s localhost:8645/v1/models   # veja o id do modelo de visão (ex.: grok-...-vision)
+#    edite ~/.config/rotom-agent.env e defina:
+#      ROTOM_AGENT_VISION_MODEL=<id-do-modelo-de-visao>
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user restart rotom-agent
+
+# 4. Confira: GET /health deve mostrar "vision": true
+```
+
+Não é preciso mexer no bridge do Windows: a imagem continua indo para o mesmo
+`/chat`; o shim é que decide entre agente (texto) e proxy de visão (imagem).

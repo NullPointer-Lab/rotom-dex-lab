@@ -9,13 +9,19 @@ is stdio for editors). This tiny, dependency-free service fills that gap.
 
 It exposes, on the LAN:
 
-    GET  /health            -> {"ok": true, "profile": "rotom-dex"}
+    GET  /health            -> {"ok": true, "profile": "rotom-dex", "vision": bool}
     POST /chat              -> {"reply": str, "suggestedActions": [...], "offline": false}
 
-``POST /chat`` runs ``hermes -z --profile <profile> --continue <session>`` so the
-agent keeps conversation memory, optionally with a pasted image, and returns the
-reply plus any safe suggested actions the agent emitted on a trailing
-``ACTIONS:`` line. The endpoint requires a bearer token (``ROTOM_AGENT_TOKEN``).
+Routing:
+  * Text         -> ``hermes -z --profile <profile> --continue <session>`` (agent,
+                    with conversation memory).
+  * With image   -> the local Hermes OpenAI-compatible ``proxy`` (a vision-capable
+                    model such as xAI Grok), because ``hermes -z`` has no native
+                    image input. Vision is OFF until ROTOM_AGENT_VISION_MODEL is set
+                    and ``hermes proxy start`` is running; until then an attached
+                    image gets an honest "I can't see photos yet" reply.
+
+``POST /chat`` requires a bearer token (``ROTOM_AGENT_TOKEN``).
 
 Run it on the Hermes box (same server as Rosie):
 
@@ -23,11 +29,20 @@ Run it on the Hermes box (same server as Rosie):
 
 Configuration (environment variables):
     ROTOM_AGENT_TOKEN     required bearer token shared with the Rotom bridge
+    ROTOM_AGENT_HOST      listen interface (default 0.0.0.0)
     ROTOM_AGENT_PORT      listen port (default 8770)
-    ROTOM_AGENT_PROFILE   Hermes profile to invoke (default "rotom-dex")
+    ROTOM_AGENT_PROFILE   Hermes profile to invoke for text (default "rotom-dex")
     ROTOM_AGENT_SESSION   session name for conversation memory (default "rotom-web")
     ROTOM_AGENT_TIMEOUT   per-request agent timeout in seconds (default 150)
     HERMES_BIN            path to the hermes CLI (default ~/.local/bin/hermes)
+
+    # Vision (images) — via the local `hermes proxy` (OpenAI-compatible):
+    ROTOM_AGENT_VISION_MODEL    vision model name; EMPTY disables vision (default "")
+    ROTOM_AGENT_VISION_URL      proxy chat-completions URL
+                                (default http://127.0.0.1:8645/v1/chat/completions)
+    ROTOM_AGENT_VISION_TOKEN    bearer for the proxy (any value; the proxy attaches
+                                the real provider creds). Default "rotom".
+    ROTOM_AGENT_VISION_TIMEOUT  vision request timeout in seconds (default 90)
 """
 from __future__ import annotations
 
@@ -36,11 +51,10 @@ import binascii
 import hmac
 import json
 import os
-import re
 import subprocess
 import sys
-import tempfile
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("ROTOM_AGENT_TOKEN", "")
@@ -50,6 +64,11 @@ PROFILE = os.environ.get("ROTOM_AGENT_PROFILE", "rotom-dex")
 SESSION = os.environ.get("ROTOM_AGENT_SESSION", "rotom-web")
 TIMEOUT = float(os.environ.get("ROTOM_AGENT_TIMEOUT", "150"))
 HERMES_BIN = os.environ.get("HERMES_BIN", os.path.expanduser("~/.local/bin/hermes"))
+
+VISION_MODEL = os.environ.get("ROTOM_AGENT_VISION_MODEL", "").strip()
+VISION_URL = os.environ.get("ROTOM_AGENT_VISION_URL", "http://127.0.0.1:8645/v1/chat/completions")
+VISION_TOKEN = os.environ.get("ROTOM_AGENT_VISION_TOKEN", "rotom")
+VISION_TIMEOUT = float(os.environ.get("ROTOM_AGENT_VISION_TIMEOUT", "90"))
 
 ALLOWED_ACTIONS = {
     "arduino.board_list",
@@ -63,6 +82,12 @@ ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 ACTION_PREFIX = "ACTIONS:"
 
+# Friendly, honest fallback when the agent/vision can't read an attached image.
+IMAGE_UNAVAILABLE = (
+    "Rotom! Ainda não consigo enxergar fotos por aqui, mas me conta com palavras o "
+    "que aparece que eu te ajudo! Você também pode clicar nos botões abaixo."
+)
+
 # Serialize agent calls: one session must not be entered concurrently.
 _AGENT_LOCK = threading.Lock()
 
@@ -74,16 +99,20 @@ separadas por vírgula, ações dentre: arduino.board_list, arduino.compile, ard
 diagnostics.open, templates.list.
 
 Estado do laboratório (pode usar se útil): {context}
-{image_note}
 Mensagem do Davi: {message}"""
 
+VISION_SYSTEM = (
+    "Você é o Rotom Dex, ajudante lúdico em português do Brasil para o Davi, de 9 anos, "
+    "que monta projetos com Arduino/ESP32. Olhe a imagem e responda curto, simples e animado. "
+    "Se a foto mostrar fios, bateria, motor ou alimentação e houver dúvida, peça para chamar o papai "
+    "e desligar a energia antes de mexer. Não afirme polaridade/ligação se a foto estiver ruim. "
+    "Se ajudar, termine com UMA linha começando com 'ACTIONS:' listando, separadas por vírgula, ações "
+    "dentre: arduino.board_list, arduino.compile, arduino.upload, serial.open, diagnostics.open, templates.list."
+)
 
-def _ext_for_mime(mime: str) -> str:
-    return {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(mime, ".img")
 
-
-def _save_image(data_url: str) -> str:
-    """Validate a base64 data: URL and write it to a temp file. Returns the path."""
+def _validate_image_data_url(data_url: str) -> str:
+    """Validate a base64 data: image URL (type + size). Returns the mime."""
     if not data_url.startswith("data:"):
         raise ValueError("imagem inválida")
     header, b64 = data_url.split(",", 1)
@@ -99,10 +128,7 @@ def _save_image(data_url: str) -> str:
         raise ValueError("base64 inválido") from exc
     if not raw or len(raw) > MAX_IMAGE_BYTES:
         raise ValueError("imagem vazia ou grande demais")
-    fd, path = tempfile.mkstemp(prefix="rotom-img-", suffix=_ext_for_mime(mime))
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(raw)
-    return path
+    return mime
 
 
 def _split_reply_and_actions(content: str) -> tuple[str, list[dict]]:
@@ -126,51 +152,61 @@ def _split_reply_and_actions(content: str) -> tuple[str, list[dict]]:
     return reply, actions
 
 
-# Friendly, honest fallback when the agent can't (yet) read an attached image.
-# The one-shot `hermes -z` channel has no native image input, so we never pretend
-# Rotom saw the photo.
-IMAGE_UNAVAILABLE = (
-    "Rotom! Ainda não consigo enxergar fotos por aqui, mas me conta com palavras o "
-    "que aparece que eu te ajudo! Você também pode clicar nos botões abaixo."
-)
-
-
-def run_agent(message: str, context: dict, image_data_url: str | None) -> tuple[str, list[dict], bool]:
-    """Run the agent. Returns ``(reply, actions, ok)``; ``ok=False`` => no real answer."""
-    image_path = None
-    image_note = ""
+def _context_text(context: dict) -> str:
     try:
-        if image_data_url:
-            image_path = _save_image(image_data_url)
-            image_note = f"O Davi anexou uma imagem. Veja o arquivo: {image_path}\n"
-        try:
-            context_text = json.dumps(context, ensure_ascii=False)[:1500]
-        except (TypeError, ValueError):
-            context_text = "{}"
-        prompt = PROMPT_TEMPLATE.format(
-            context=context_text, image_note=image_note, message=message or "(sem texto)"
-        )
-        # NOTE: we deliberately do NOT pass --accept-hooks. The agent's hook
-        # approval gate stays on, so a LAN-reachable request can never make the
-        # agent silently run an unseen shell hook.
-        cmd = [HERMES_BIN, "-z", prompt, "--profile", PROFILE, "--continue", SESSION]
-        with _AGENT_LOCK:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
-        out = (proc.stdout or "").strip()
-        if not out:
-            return "", [], False
-        reply, actions = _split_reply_and_actions(out)
-        return reply, actions, True
-    finally:
-        if image_path:
-            try:
-                os.remove(image_path)
-            except OSError:
-                pass
+        return json.dumps(context, ensure_ascii=False)[:1500]
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def run_agent_text(message: str, context: dict) -> tuple[str, list[dict], bool]:
+    """Run the text agent. Returns ``(reply, actions, ok)``; ok=False => no answer."""
+    prompt = PROMPT_TEMPLATE.format(context=_context_text(context), message=message or "(sem texto)")
+    # NOTE: we deliberately do NOT pass --accept-hooks. The agent's hook approval
+    # gate stays on, so a LAN-reachable request can never make the agent silently
+    # run an unseen shell hook.
+    cmd = [HERMES_BIN, "-z", prompt, "--profile", PROFILE, "--continue", SESSION]
+    with _AGENT_LOCK:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+    out = (proc.stdout or "").strip()
+    if not out:
+        return "", [], False
+    reply, actions = _split_reply_and_actions(out)
+    return reply, actions, True
+
+
+def describe_image_via_proxy(message: str, image_data_url: str, context: dict) -> tuple[str, list[dict]]:
+    """Send the image to the local Hermes proxy (vision model) and parse the reply."""
+    text = message.strip() or "O que você vê nesta imagem? Ajude o Davi."
+    text = f"{text}\n\nEstado do laboratório: {_context_text(context)}"
+    payload = {
+        "model": VISION_MODEL,
+        "max_tokens": 500,
+        "messages": [
+            {"role": "system", "content": VISION_SYSTEM},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            },
+        ],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(VISION_URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {VISION_TOKEN}")
+    with urllib.request.urlopen(req, timeout=VISION_TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    content_text = data["choices"][0]["message"]["content"]
+    if not isinstance(content_text, str) or not content_text.strip():
+        raise ValueError("resposta vazia do modelo de visão")
+    return _split_reply_and_actions(content_text)
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "RotomAgentShim/1.0"
+    server_version = "RotomAgentShim/1.1"
 
     def _send(self, code: int, body: dict) -> None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -189,9 +225,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         if self.path.rstrip("/") == "/health":
-            self._send(200, {"ok": True, "profile": PROFILE})
+            self._send(200, {"ok": True, "profile": PROFILE, "vision": bool(VISION_MODEL)})
         else:
             self._send(404, {"error": "not found"})
+
+    def _send_image_unavailable(self) -> None:
+        self._send(200, {"reply": IMAGE_UNAVAILABLE, "suggestedActions": [], "offline": True})
 
     def do_POST(self):  # noqa: N802
         if self.path.rstrip("/") != "/chat":
@@ -209,12 +248,28 @@ class Handler(BaseHTTPRequestHandler):
         message = str(data.get("message", "")).strip()
         image = data.get("imageDataUrl")
         context = data.get("context") if isinstance(data.get("context"), dict) else {}
-        if not message and not image:
+        has_image = isinstance(image, str) and bool(image)
+        if not message and not has_image:
             self._send(400, {"error": "mensagem ou imagem obrigatória"})
             return
-        has_image = isinstance(image, str) and bool(image)
+
+        # --- image path: via the local Hermes vision proxy --------------------
+        if has_image:
+            if not VISION_MODEL:
+                self._send_image_unavailable()
+                return
+            try:
+                _validate_image_data_url(image)
+                reply, actions = describe_image_via_proxy(message, image, context)
+            except Exception:  # noqa: BLE001 — never leak internals; be honest
+                self._send_image_unavailable()
+                return
+            self._send(200, {"reply": reply, "suggestedActions": actions, "offline": False})
+            return
+
+        # --- text path: via the rotom-dex agent -------------------------------
         try:
-            reply, actions, ok = run_agent(message, context, image if has_image else None)
+            reply, actions, ok = run_agent_text(message, context)
         except subprocess.TimeoutExpired:
             self._send(200, {
                 "reply": "Rotom! Pensei demais e travei. Tenta perguntar de novo, mais curtinho?",
@@ -230,10 +285,11 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
         if not ok:
-            # No usable answer. If a photo was attached, be honest: this channel
-            # can't see images yet.
-            msg = IMAGE_UNAVAILABLE if has_image else "Rotom! Tive um soluço aqui, tenta de novo."
-            self._send(200, {"reply": msg, "suggestedActions": [], "offline": True})
+            self._send(200, {
+                "reply": "Rotom! Tive um soluço aqui, tenta de novo.",
+                "suggestedActions": [],
+                "offline": True,
+            })
             return
         self._send(200, {"reply": reply, "suggestedActions": actions, "offline": False})
 
@@ -249,7 +305,8 @@ def main() -> int:
         print(f"ERRO: hermes não encontrado em {HERMES_BIN}", file=sys.stderr)
         return 2
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Rotom agent shim ouvindo em {HOST}:{PORT} (profile {PROFILE})", flush=True)
+    vision = VISION_MODEL or "desligada"
+    print(f"Rotom agent shim ouvindo em {HOST}:{PORT} (profile {PROFILE}, visão: {vision})", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
