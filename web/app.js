@@ -256,8 +256,14 @@ async function loadMissions() {
   }
 }
 
+function showSerialMode(fake) {
+  serialMode.textContent = fake ? 'Modo simulação (dev)' : 'Pronto para ler a placa';
+  serialMode.classList.toggle('sim', !!fake);
+}
+
 document.querySelector('#healthBtn').onclick = async () => {
-  await showResult('Verificando o laboratório', api('/api/health'));
+  const health = await showResult('Verificando o laboratório', api('/api/health'));
+  showSerialMode(health.fakeSerial);
   await refreshDevices();
 };
 document.querySelector('#boardsBtn').onclick = refreshDevices;
@@ -266,5 +272,9 @@ document.querySelector('#uploadBtn').onclick = doUpload;
 document.querySelector('#serialOpenBtn').onclick = openSerial;
 document.querySelector('#serialCloseBtn').onclick = closeSerial;
 
-appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
+if (!TOKEN) {
+  appendChat('agent', 'Opa! Abri sem a chave de acesso. Feche esta aba e abra o Rotom Dex Lab pelo atalho do papai (o endereço precisa terminar com ?token=...).');
+} else {
+  appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
+}
 loadMissions();

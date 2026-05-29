@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import os
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +23,49 @@ from .translate import core_installed, friendly_arduino_message
 ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "web"
 
-app = FastAPI(title="Rotom Dex Lab", version="0.2.0")
+
+def startup_banner(
+    *,
+    token: str,
+    port: int | str,
+    hermes_configured: bool,
+    arduino_found: bool,
+    fake_serial: bool,
+) -> list[str]:
+    """Lines printed at startup so a human can find the access URL and token.
+
+    Without this, starting the server directly (e.g. ``uvicorn bridge.server:app``)
+    produces a random token with no way to discover it, and every action endpoint
+    rejects the request. Kept pure so it can be unit-tested.
+    """
+    url = f"http://127.0.0.1:{port}/?token={token}"
+    lines = [
+        "==== Rotom Dex Lab ====",
+        f"Abra no navegador (neste computador): {url}",
+        f"PIN/token de acesso: {token}",
+        f"Arduino CLI: {'encontrado' if arduino_found else 'NAO encontrado — instale o arduino-cli'}",
+        f"Cerebro online (Hermes): {'configurado' if hermes_configured else 'offline (modo local)'}",
+    ]
+    if fake_serial:
+        lines.append("Monitor serial em MODO SIMULACAO (ROTOM_DEX_FAKE_SERIAL=1).")
+    lines.append("Para acesso por outro aparelho na rede, troque 127.0.0.1 pelo IP deste computador.")
+    return lines
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    for line in startup_banner(
+        token=auth.token,
+        port=os.environ.get("ROTOM_DEX_PORT", "8765"),
+        hermes_configured=hermes.configured,
+        arduino_found=bool(arduino.runner.find_executable()),
+        fake_serial=serial_manager.fake,
+    ):
+        print(line, flush=True)
+    yield
+
+
+app = FastAPI(title="Rotom Dex Lab", version="0.2.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(WEB_ROOT)), name="static")
 
 config = load_config()
@@ -214,11 +259,31 @@ async def serial_stream(websocket: WebSocket, session_id: str):
         await websocket.send_text("Sessão serial não encontrada. Abra o monitor de novo.")
         await websocket.close()
         return
-    try:
+
+    async def pump() -> None:
         async for line in serial_manager.stream(session_id):
             await websocket.send_text(line)
-    except WebSocketDisconnect:
-        pass
+
+    async def watch_disconnect() -> None:
+        # Detect the client closing the tab even when the board sends no data,
+        # so a silent port does not leak an open serial session forever.
+        try:
+            while True:
+                await websocket.receive()
+        except WebSocketDisconnect:
+            return
+
+    pump_task = asyncio.ensure_future(pump())
+    watch_task = asyncio.ensure_future(watch_disconnect())
+    try:
+        done, pending = await asyncio.wait(
+            {pump_task, watch_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            with suppress(Exception):
+                task.result()
     finally:
         serial_manager.close(session_id)
 
