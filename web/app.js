@@ -396,6 +396,28 @@ imageAttachBtn.onclick = () => imageInput.click();
 imageInput.onchange = () => setPendingImageFromFile(imageInput.files[0]);
 imageRemoveBtn.onclick = clearPendingImage;
 
+const CODE_CHANGE_RE = /\b(mud[aei]|mudar|troca|trocar|coloca|colocar|faz|faça|programa|programar|corrige|corrija|conserta|arruma|altera|alterar|substitui|substituir|cria|criar)\b/i;
+const CODE_TARGET_RE = /\b(c[oó]digo|sketch|programa|zapp|placa|esp32|rosto|tela|display|robot eyes|previs[aã]o|rel[oó]gio|buzzer|motor|servo|led|sensor)\b/i;
+
+function looksLikeCodeChange(message) {
+  const text = message || '';
+  if (!CODE_CHANGE_RE.test(text)) return false;
+  if (CODE_TARGET_RE.test(text)) return true;
+  return /\b(corrige|corrija|conserta|arruma|faça a mudança|faz a mudança)\b/i.test(text);
+}
+
+function buildCodeInstructionFromChat(message) {
+  const recentUserMessages = chatHistory()
+    .filter((m) => m.role === 'user')
+    .map((m) => (m.text || '').replace(/^✨\s*/, '').trim())
+    .filter(Boolean)
+    .slice(-6);
+  const context = recentUserMessages.length
+    ? `Contexto recente da conversa com o Davi:\n${recentUserMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\n`
+    : '';
+  return `${context}Pedido atual: ${message}\n\nImplemente a mudança no sketch do Zapp. Se o pedido atual for curto como "corrija" ou "faça a mudança", use o contexto recente para entender que mudança foi pedida.`;
+}
+
 chatInput.addEventListener('paste', (event) => {
   const items = event.clipboardData && event.clipboardData.items;
   if (!items) return;
@@ -438,6 +460,13 @@ chatForm.onsubmit = async (event) => {
   setChatBusy(true);
   const context = { selectedPort: portInput.value.trim() || null, lastResult, boardChoices };
   try {
+    if (!image && looksLikeCodeChange(message)) {
+      appendChat('agent', 'Entendi. Agora eu vou mexer no código do Zapp, testar e tentar enviar para a placa. ⚡');
+      const data = await runVibeInstruction(buildCodeInstructionFromChat(message), { fromChat: true });
+      chatStatus.textContent = data && data.offline ? 'Rotom em modo local' : 'Rotom programou';
+      chatStatus.classList.toggle('offline', !!(data && data.offline));
+      return;
+    }
     const data = image
       ? await api('/api/chat/multimodal', {
           method: 'POST',
@@ -717,39 +746,53 @@ async function restoreVersion(hash, message) {
   }
 }
 
+async function runVibeInstruction(instruction, options = {}) {
+  const fromChat = !!options.fromChat;
+  const sendBtn = vibeForm ? vibeForm.querySelector('button:not([type="button"])') : null;
+  if (vibeInput) vibeInput.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+  if (vibeStatus) {
+    vibeStatus.classList.remove('hidden', 'good', 'bad');
+    vibeStatus.innerHTML = '<span class="spinner"></span> 🛠️ Rotom está programando, testando e enviando pra placa… pode levar um tempinho.';
+  }
+  try {
+    const data = await api('/api/code/vibe', {
+      method: 'POST',
+      body: JSON.stringify({ instruction, port: portInput.value.trim() || null }),
+    });
+    const msg = data.message || (data.ok ? 'Pronto!' : 'Não deu certo.');
+    setVibeStatus(msg, data.ok ? 'good' : 'bad');
+    if (fromChat) appendChat('agent', msg);
+    appendCard(msg, data.raw || { ok: !!data.ok, message: msg });
+    if (data.ok) {
+      if (!fromChat && vibeInput) vibeInput.value = '';
+      lastResult = data.upload && data.upload.ok
+        ? { action: 'upload', ok: true, message: msg }
+        : { action: 'compile', ok: true, message: msg };
+      updateGuide();
+    }
+    await loadVersions();
+    return data;
+  } catch (err) {
+    setVibeStatus(`Ops! ${err.message}. ${friendlyHint(err.message)}`, 'bad');
+    appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
+    throw err;
+  } finally {
+    if (vibeInput) vibeInput.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
 if (vibeForm) {
   vibeForm.onsubmit = async (event) => {
     event.preventDefault();
     const instruction = vibeInput.value.trim();
     if (!instruction) return;
-    const sendBtn = vibeForm.querySelector('button:not([type="button"])');
-    vibeInput.disabled = true;
-    if (sendBtn) sendBtn.disabled = true;
-    vibeStatus.classList.remove('hidden', 'good', 'bad');
-    vibeStatus.innerHTML = '<span class="spinner"></span> 🛠️ Rotom está programando, testando e enviando pra placa… pode levar um tempinho.';
     appendChat('user', `✨ ${instruction}`);
     try {
-      const data = await api('/api/code/vibe', {
-        method: 'POST',
-        body: JSON.stringify({ instruction, port: portInput.value.trim() || null }),
-      });
-      const msg = data.message || (data.ok ? 'Pronto!' : 'Não deu certo.');
-      setVibeStatus(msg, data.ok ? 'good' : 'bad');
-      appendCard(msg, data.raw || { ok: !!data.ok, message: msg });
-      if (data.ok) {
-        vibeInput.value = '';
-        lastResult = data.upload && data.upload.ok
-          ? { action: 'upload', ok: true, message: msg }
-          : { action: 'compile', ok: true, message: msg };
-        updateGuide();
-      }
-      await loadVersions();
-    } catch (err) {
-      setVibeStatus(`Ops! ${err.message}. ${friendlyHint(err.message)}`, 'bad');
-      appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
-    } finally {
-      vibeInput.disabled = false;
-      if (sendBtn) sendBtn.disabled = false;
+      await runVibeInstruction(instruction);
+    } catch {
+      /* runVibeInstruction already told Davi what happened */
     }
   };
 }
