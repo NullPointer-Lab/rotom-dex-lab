@@ -20,6 +20,32 @@ if (-not ($BindHost -match '^[A-Za-z0-9\.:-]+$')) {
 
 Set-Location $ProjectRoot
 
+function Write-Rotom($Message, $Color = "Cyan") {
+  Write-Host "[Rotom Dex] $Message" -ForegroundColor $Color
+}
+
+function Stop-ExistingRotomServer {
+  $Listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  if (-not $Listeners) { return }
+
+  $ProcessIds = $Listeners | Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($ProcessId in $ProcessIds) {
+    if (-not $ProcessId -or $ProcessId -eq 0) { continue }
+    $Proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    $CommandLine = if ($Proc) { [string]$Proc.CommandLine } else { "" }
+    $Name = if ($Proc) { [string]$Proc.Name } else { "processo desconhecido" }
+    $IsRotom = ($CommandLine -match "uvicorn") -and ($CommandLine -match "bridge\.server:app")
+    if ($IsRotom) {
+      Write-Rotom "Fechando servidor Rotom Dex antigo na porta $Port para carregar a versão nova..." "Yellow"
+      Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+      Wait-Process -Id $ProcessId -Timeout 5 -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 300
+      continue
+    }
+    throw "A porta $Port já está em uso por $Name (PID $ProcessId), mas não parece ser o Rotom Dex. Feche esse programa ou use outra ROTOM_DEX_PORT."
+  }
+}
+
 # Always run from the venv Python. Create/install it if missing.
 if (-not (Test-Path $VenvPython)) {
   Write-Host "Ambiente virtual não encontrado. Criando .venv..." -ForegroundColor Yellow
@@ -62,6 +88,8 @@ Write-Host "UI na rede interna: $UiUrl" -ForegroundColor Green
 Write-Host "PIN de acesso: $Token" -ForegroundColor Green
 Write-Host "Atenção: a bridge ficará acessível na LAN. Use apenas em rede doméstica confiável." -ForegroundColor Yellow
 Write-Host "Log do servidor: $LogFile" -ForegroundColor DarkGray
+
+Stop-ExistingRotomServer
 
 # Start the server detached, redirecting stdout/stderr to a visible log file.
 $Server = Start-Process -FilePath $VenvPython -WorkingDirectory $ProjectRoot -PassThru `

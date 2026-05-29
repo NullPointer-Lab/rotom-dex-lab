@@ -53,6 +53,33 @@ def test_detected_ports_include_reason_and_confidence_for_ch340():
     assert devices[1]["confidence"] == "generica"
 
 
+def test_detected_ports_without_matching_boards_still_show_all_serial_ports():
+    stdout = json.dumps(
+        {
+            "detected_ports": [
+                {"port": {"address": "COM5", "label": "COM5", "protocol_label": "Serial Port", "properties": {}}},
+                {"port": {"address": "COM6", "label": "COM6", "protocol_label": "Serial Port", "properties": {}}},
+                {"port": {"address": "COM3", "label": "COM3", "protocol_label": "Serial Port", "properties": {}}},
+                {"port": {"address": "COM7", "label": "COM7", "protocol_label": "Serial Port", "properties": {}}},
+                {"port": {"address": "COM8", "label": "COM8", "protocol_label": "Serial Port", "properties": {}}},
+                {"port": {"address": "COM4", "label": "COM4", "protocol_label": "Serial Port", "properties": {}}},
+                {
+                    "port": {
+                        "address": "COM9",
+                        "label": "COM9",
+                        "protocol_label": "Serial Port (USB)",
+                        "properties": {"pid": "0x7523", "serialNumber": "", "vid": "0x1A86"},
+                    }
+                },
+            ]
+        }
+    )
+    devices = simplify_board_list(stdout)
+    assert [device["port"] for device in devices] == ["COM9", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8"]
+    assert devices[0]["isKnown"] is True
+    assert devices[0]["name"].startswith("USB-Serial CH340")
+
+
 def test_mission_status_can_be_saved(tmp_path):
     path = tmp_path / "missions.json"
     path.write_text(
