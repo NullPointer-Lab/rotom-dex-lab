@@ -60,7 +60,12 @@ function appendCard(message, data) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
+function tokenMissingMessage() {
+  return 'Abra o Rotom Dex pelo endereço completo com ?token=... que aparece no terminal do papai.';
+}
+
 async function api(path, options = {}) {
+  if (!TOKEN) throw new Error(tokenMissingMessage());
   const headers = {
     'Content-Type': 'application/json',
     'X-Rotom-Token': TOKEN,
@@ -384,9 +389,14 @@ serialInput.onkeydown = (event) => {
 document.querySelector('#serialCloseBtn').onclick = closeSerial;
 
 if (!TOKEN) {
-  appendChat('agent', 'Opa! Abri sem a chave de acesso. Feche esta aba e abra o Rotom Dex Lab pelo atalho do papai (o endereço precisa terminar com ?token=...).');
+  chatStatus.textContent = 'Sem token';
+  chatStatus.classList.add('offline');
+  const message = tokenMissingMessage();
+  appendChat('agent', `Opa! ${message}`);
+  setStatus(message, { ok: false, error: 'token_missing' });
+  if (templateList) templateList.textContent = 'Abra com ?token=... para carregar os templates seguros.';
 } else {
   appendChat('agent', 'Oi, Davi! Eu sou o Rotom Dex. Clique em Começar para procurar sua placa.');
+  loadMissions();
+  loadTemplates();
 }
-loadMissions();
-loadTemplates();
