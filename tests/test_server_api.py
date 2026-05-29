@@ -455,6 +455,61 @@ def test_chat_offline_when_hermes_unconfigured(client, token, monkeypatch):
     assert any(a["type"] == "arduino.compile" for a in body["suggestedActions"])
 
 
+def test_chat_routes_code_change_to_vibe(client, token, monkeypatch):
+    from bridge.hermes_client import HermesReply
+
+    class _CodeHermes:
+        configured = True
+
+        async def send_message(self, message, context):
+            return HermesReply(reply="CODE: deixa o relogio vermelho", suggested_actions=[], offline=False)
+
+    seen = {}
+
+    async def fake_run_vibe(project, instruction, port=None):
+        seen["instruction"] = instruction
+        seen["port"] = port
+        return {"ok": True, "message": "Pronto! Programei e já enviei 🚀✅", "upload": {"ok": True, "port": "COM9"}}
+
+    monkeypatch.setattr(server, "hermes", _CodeHermes())
+    monkeypatch.setattr(server, "_run_vibe", fake_run_vibe)
+    res = client.post(
+        "/api/chat",
+        headers={"X-Rotom-Token": token},
+        json={"message": "deixa o relogio vermelho", "context": {"selectedPort": "COM9"}},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["codeChange"] is True
+    assert "enviei" in body["reply"].lower()
+    assert seen == {"instruction": "deixa o relogio vermelho", "port": "COM9"}
+
+
+def test_chat_normal_message_does_not_touch_code(client, token, monkeypatch):
+    from bridge.hermes_client import HermesReply
+
+    class _ChatHermes:
+        configured = True
+
+        async def send_message(self, message, context):
+            return HermesReply(reply="Oi, Davi! Como posso ajudar?", suggested_actions=[], offline=False)
+
+    called = {"vibe": False}
+
+    async def fake_run_vibe(project, instruction, port=None):
+        called["vibe"] = True
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "hermes", _ChatHermes())
+    monkeypatch.setattr(server, "_run_vibe", fake_run_vibe)
+    res = client.post("/api/chat", headers={"X-Rotom-Token": token}, json={"message": "oi"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body.get("codeChange") is not True
+    assert "Oi, Davi" in body["reply"]
+    assert called["vibe"] is False
+
+
 # --- websocket token gating -------------------------------------------------
 
 def test_serial_websocket_rejects_bad_token(client):

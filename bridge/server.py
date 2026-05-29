@@ -523,6 +523,24 @@ async def chat(req: ChatRequest):
         **req.context,
     }
     reply = await hermes.send_message(req.message, context)
+    text = (reply.reply or "").strip()
+
+    # If the agent decided this is a request to CHANGE the project, Rotom programs
+    # and delivers it right here — so the chat is the one place Davi talks and the
+    # robot actually changes (no separate box, no "nothing happened").
+    if text.upper().startswith("CODE:"):
+        instruction = text[5:].strip()
+        if instruction:
+            selected_port = req.context.get("selectedPort") if isinstance(req.context, dict) else None
+            vibe = await _run_vibe(project, instruction, selected_port)
+            return {
+                "reply": vibe.get("message", "Pronto!"),
+                "suggestedActions": [],
+                "offline": bool(vibe.get("offline")),
+                "codeChange": True,
+                "vibe": vibe,
+            }
+
     return {
         "reply": reply.reply,
         "suggestedActions": reply.suggested_actions,
@@ -667,14 +685,12 @@ async def code_restore(req: CodeRestoreRequest):
     }
 
 
-@app.post("/api/code/vibe", dependencies=[Depends(require_token)])
-async def code_vibe(req: VibeRequest):
-    try:
-        project = config.get_project(req.projectId)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
-    if not req.instruction.strip():
-        raise HTTPException(status_code=400, detail="Escreva o que você quer criar ou mudar.")
+async def _run_vibe(project, instruction: str, port: str | None = None) -> dict:
+    """Apply a vibecoded change: edit -> compile (auto-heal) -> save -> deliver.
+
+    Returns a child-friendly result dict (never raises for expected failures), so
+    both the "Criar/Mudar" box and the chat can use it.
+    """
     if _code_agent_url() is None:
         return {"ok": False, "offline": True, "message": "O cérebro de código do Rotom ainda não está ligado. Peça ajuda ao papai."}
 
@@ -682,9 +698,9 @@ async def code_vibe(req: VibeRequest):
     try:
         sketch_path = Path(resolve_sketch_path(project))
     except PolicyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": False, "message": f"Não consegui achar o arquivo do projeto: {exc}"}
     if not sketch_path.exists():
-        raise HTTPException(status_code=400, detail="Não achei o arquivo do projeto para mudar.")
+        return {"ok": False, "message": "Não achei o arquivo do projeto para mudar."}
     current_code = sketch_path.read_text(encoding="utf-8", errors="replace")
 
     codegen.ensure_repo(root)
@@ -692,7 +708,7 @@ async def code_vibe(req: VibeRequest):
         codegen.commit_all(root, "Save inicial")
 
     try:
-        edits_text = await _request_code_edits(req.instruction, current_code, project.sketch)
+        edits_text = await _request_code_edits(instruction, current_code, project.sketch)
     except Exception:  # noqa: BLE001
         return {"ok": False, "offline": True, "message": "Não consegui falar com o cérebro de código agora. Tenta de novo daqui a pouco."}
 
@@ -707,10 +723,10 @@ async def code_vibe(req: VibeRequest):
 
     compiled, installed, unresolved = await _compile_autoheal(project)
     if compiled.exit_code == 0:
-        save = codegen.commit_all(root, _vibe_save_message(req.instruction))
+        save = codegen.commit_all(root, _vibe_save_message(instruction))
         extra = f" (instalei sozinho: {', '.join(installed)})" if installed else ""
         # Rotom programa E entrega na placa automaticamente.
-        port = (req.port or "").strip() or await _detect_board_port()
+        port = (port or "").strip() or await _detect_board_port()
         upload = None
         if port:
             try:
@@ -756,7 +772,7 @@ async def code_vibe(req: VibeRequest):
 
     # Baseline também não compila aqui -> não dá pra usar a compilação como teste.
     codegen.apply_edits(root, edits)
-    save = codegen.commit_all(root, _vibe_save_message(req.instruction) + " (nao testado aqui)")
+    save = codegen.commit_all(root, _vibe_save_message(instruction) + " (nao testado aqui)")
     note = f" Faltou a biblioteca: {', '.join(unresolved)}." if unresolved else ""
     return {
         "ok": True,
@@ -767,3 +783,14 @@ async def code_vibe(req: VibeRequest):
         "message": "Salvei a sua mudança ✅ — mas não consegui testar aqui (pode faltar uma biblioteca do projeto)." + note + " Confira na sua máquina; se precisar, é só voltar para um save.",
         "raw": result_to_dict(compiled, "compile"),
     }
+
+
+@app.post("/api/code/vibe", dependencies=[Depends(require_token)])
+async def code_vibe(req: VibeRequest):
+    try:
+        project = config.get_project(req.projectId)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Projeto não encontrado.") from exc
+    if not req.instruction.strip():
+        raise HTTPException(status_code=400, detail="Escreva o que você quer criar ou mudar.")
+    return await _run_vibe(project, req.instruction, req.port)
