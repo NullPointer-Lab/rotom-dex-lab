@@ -10,6 +10,8 @@
 #define ROBOEYES_TFT_MODE
 #include <TFT_RoboEyes.h>
 
+#include <Bluepad32.h>   // controle Bluetooth (gamepad) — core esp32-bluepad32
+
 #define TFT_CS    27
 #define TFT_DC    16
 #define TFT_RST   17
@@ -18,16 +20,43 @@
 
 #define STOP_SENSOR_PIN 32
 #define CONVERSATION_SENSOR_PIN 34
-#define BUTTON_EXIT_PIN 33
-#define BUTTON_TIME_PIN 26
-#define BUTTON_INFORMATION_PIN 14
-#define BUTTON_WORD_PIN 21
-#define BUTTON_FACES_PIN 22
 #define BUZZER_PIN 25
 #define TFT_LED_PIN 13
 #define SENSOR_ACTIVE LOW
 #define CONVERSATION_SENSOR_ACTIVE LOW
-#define BUTTON_ACTIVE LOW
+
+// ── Ponte H L298N — 2 motores DC do chassi ──────────────────────────────────
+// Chassi: motor esquerdo (OUT1/OUT2) + motor direito (OUT3/OUT4) + 1 roda boba.
+//
+// LIGAÇÃO DE FORÇA (terminais parafuso):
+//   +12V  ← (+) do pacote de pilhas (alimenta os MOTORES)
+//   GND   ← (−) das pilhas  E TAMBÉM o GND do ESP32  ◄── TERRA COMUM (obrigatório!)
+//   +5V   ← ver nota de alimentação abaixo (depende do jumper de 5V)
+//   OUT1/OUT2 → motor ESQUERDO     OUT3/OUT4 → motor DIREITO
+//
+// JUMPERS: deixe os jumpers ENA e ENB COLOCADOS (motores sempre habilitados).
+// Aqui o PWM vai direto nas entradas INx, então NÃO ligamos ENA/ENB ao ESP32 —
+// economiza 2 GPIOs (o Zapp tem pouquíssimos livres).
+//
+// SINAIS (pinos de header da L298N ← GPIOs livres do Zapp; 5 e 2 são strapping
+// pins: podem dar um tranco mínimo de ~100 ms nos motores no boot):
+// Mapa confirmado pelo teste de pinos (qual GPIO move qual roda e p/ que lado):
+//   esquerda: GPIO2 = frente, GPIO5 = trás   |   direita: GPIO19 = frente, GPIO4 = trás
+// IN1 = pino que faz "frente"; IN2 = pino que faz "trás".
+#define MOTOR_L_IN1 2    // motor ESQUERDO  - frente
+#define MOTOR_L_IN2 5    //                 - trás
+#define MOTOR_R_IN1 19   // motor DIREITO   - frente
+#define MOTOR_R_IN2 4    //                 - trás
+//
+// ⚠️ ALIMENTAÇÃO COM 4×AA (~6V) — a L298N "come" ~2V, então:
+//   • Motores recebem só ~4V (ficam fracos). Se puder, use 6×AA (~9V): muito melhor.
+//   • Jumper de 5V: a L298N regula o +12V pra 5V (que alimenta a lógica dela).
+//     Esse regulador precisa de ~7V+ pra dar 5V firme. Com 6V ele fica no limite
+//     e a lógica pode falhar. Duas saídas confiáveis:
+//       (a) RECOMENDADO: use 6×AA (9V) com o jumper de 5V COLOCADO → tudo estável.
+//       (b) Ficar com 6V: TIRE o jumper de 5V e ligue o terminal +5V da L298N no
+//           pino 5V/VIN do ESP32 (quando ele estiver no USB). Nunca faça (a) e (b)
+//           juntos. Os 6V vão só no +12V; jamais ligue 6V no 5V/VIN do ESP32.
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 TFTRoboEyes<Adafruit_ST7735> roboEyes(tft);
@@ -56,7 +85,6 @@ unsigned long lastMiniFaceBlink = 0;
 unsigned long miniFaceBlinkStarted = 0;
 unsigned long lastSensorAction = 0;
 unsigned long sensorHoldStart = 0;
-unsigned long lastButtonAction = 0;
 unsigned long conversationSensorStart = 0;
 unsigned long lastConversationSensorAction = 0;
 unsigned long lastRoboEyesFaceChange = 0;
@@ -71,11 +99,14 @@ bool sensorWasActive = false;
 bool sensorHoldTriggered = false;
 bool conversationSensorWasActive = false;
 bool conversationHoldTriggered = false;
-bool exitButtonWasPressed = false;
-bool timeButtonWasPressed = false;
-bool informationButtonWasPressed = false;
-bool wordButtonWasPressed = false;
-bool facesButtonWasPressed = false;
+// ── Controle Bluetooth (gamepad) + modo Kart ────────────────────────────────
+ControllerPtr gamepad = nullptr;
+bool kartMode = false;
+int motorTrim = 0;               // -TRIM_MAX..+TRIM_MAX: equilíbrio entre os motores
+const int KART_DEADZONE = 120;   // zona morta do analógico (eixo ~ -512..+511)
+const int TRIM_MAX = 8;
+bool prevTrimL = false, prevTrimR = false, prevKartExit = false;
+bool prevMenuA = false, prevMenuB = false, prevMenuNavUp = false, prevMenuNavDown = false;
 bool conversationMode = false;
 bool hasWeatherData = false;
 bool hasTomorrowWeatherData = false;
@@ -136,20 +167,27 @@ void connectWiFiAndTime() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  // Tenta por ~15 s; se não conectar, SEGUE mesmo assim (não trava o robô).
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
     delay(500);
     Serial.print(".");
   }
-
   Serial.println();
-  Serial.print("WiFi conectado. IP: ");
-  Serial.println(WiFi.localIP());
 
-  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org", "time.google.com");
-
-  tft.fillScreen(ST77XX_BLACK);
-  centerText("Hora online", 44, 2, ST77XX_GREEN);
-  delay(1200);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi conectado. IP: ");
+    Serial.println(WiFi.localIP());
+    configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org", "time.google.com");
+    tft.fillScreen(ST77XX_BLACK);
+    centerText("Hora online", 44, 2, ST77XX_GREEN);
+    delay(1200);
+  } else {
+    Serial.println("WiFi NAO conectou (timeout). Seguindo sem hora online.");
+    tft.fillScreen(ST77XX_BLACK);
+    centerText("Sem WiFi", 44, 2, ST77XX_RED);
+    delay(1200);
+  }
 }
 
 void drawRobotBase() {
@@ -844,12 +882,11 @@ void showPettingMode() {
   showClockScreen();
 }
 
+const char* CONV_LABELS[] = {"Exit", "time", "information", "word", "face", "kart", "teste"};
+const int MENU_COUNT = 7;
+
 const char* getConversationOptionLabel(int option) {
-  if (option == 0) return "Exit";
-  if (option == 1) return "time";
-  if (option == 2) return "information";
-  if (option == 3) return "word";
-  return "face";
+  return CONV_LABELS[option];
 }
 
 void drawConversationOption(int option, int y) {
@@ -868,13 +905,18 @@ void drawConversationOption(int option, int y) {
 
 void showConversationScreen() {
   tft.fillScreen(ST77XX_BLACK);
-  centerText("Quer o que?", 8, 2, ST77XX_CYAN);
-  tft.drawRoundRect(8, 30, 144, 94, 6, ST77XX_BLUE);
-  drawConversationOption(0, 38);
-  drawConversationOption(1, 54);
-  drawConversationOption(2, 70);
-  drawConversationOption(3, 86);
-  drawConversationOption(4, 102);
+  centerText("Quer o que?", 4, 2, ST77XX_CYAN);
+  tft.drawRoundRect(6, 24, 148, 102, 5, ST77XX_BLUE);
+  for (int i = 0; i < MENU_COUNT; i++) drawConversationOption(i, 28 + i * 14);
+}
+
+// Muda a opção redesenhando só as 2 linhas afetadas (sem repintar a tela toda).
+void moveConversationOption(int delta) {
+  int prev = conversationOption;
+  conversationOption = (conversationOption + delta + MENU_COUNT) % MENU_COUNT;
+  if (conversationOption == prev) return;
+  drawConversationOption(prev, 28 + prev * 14);
+  drawConversationOption(conversationOption, 28 + conversationOption * 14);
 }
 
 void finishConversationAction() {
@@ -1093,8 +1135,13 @@ void runSelectedConversationOption() {
     showInformationButtonInfo();
   } else if (conversationOption == 3) {
     showWordButtonInfo();
-  } else {
+  } else if (conversationOption == 4) {
     showFacesButtonInfo();
+  } else if (conversationOption == 5) {
+    enterKartMode();
+  } else {
+    motorsSelfTest();
+    finishConversationAction();
   }
 }
 
@@ -1277,19 +1324,6 @@ void checkStopSensor() {
   sensorWasActive = sensorActive;
 }
 
-bool buttonPressed(int pin, bool &wasPressed) {
-  bool pressed = digitalRead(pin) == BUTTON_ACTIVE;
-  bool newPress = pressed && !wasPressed;
-  wasPressed = pressed;
-
-  if (newPress && millis() - lastButtonAction >= 250) {
-    lastButtonAction = millis();
-    return true;
-  }
-
-  return false;
-}
-
 void checkConversationSensor() {
   if (!clockMode || alarmSoundOn) {
     conversationSensorWasActive = false;
@@ -1332,9 +1366,7 @@ void checkConversationSensor() {
         releaseTime >= 50UL &&
         releaseTime <= 2200UL &&
         now - lastConversationSensorAction >= 350UL) {
-      conversationOption++;
-      if (conversationOption >= 5) conversationOption = 0;
-      showConversationScreen();
+      moveConversationOption(1);
       lastConversationSensorAction = now;
     }
 
@@ -1343,35 +1375,6 @@ void checkConversationSensor() {
   }
 
   conversationSensorWasActive = sensorActive;
-}
-
-void checkButtons() {
-  if (!clockMode || alarmSoundOn || !conversationMode) return;
-
-  if (buttonPressed(BUTTON_EXIT_PIN, exitButtonWasPressed)) {
-    showWakeOneBig("Exit", ST77XX_CYAN);
-    exitConversationMode();
-    return;
-  }
-
-  if (buttonPressed(BUTTON_TIME_PIN, timeButtonWasPressed)) {
-    showTimeButtonInfo();
-    return;
-  }
-
-  if (buttonPressed(BUTTON_INFORMATION_PIN, informationButtonWasPressed)) {
-    showInformationButtonInfo();
-    return;
-  }
-
-  if (buttonPressed(BUTTON_WORD_PIN, wordButtonWasPressed)) {
-    showWordButtonInfo();
-    return;
-  }
-
-  if (buttonPressed(BUTTON_FACES_PIN, facesButtonWasPressed)) {
-    showFacesButtonInfo();
-  }
 }
 
 void updateBuzzer() {
@@ -1399,6 +1402,15 @@ void updateClock() {
   unsigned long now = millis();
   if (now - lastClockUpdate < 1000) return;
   lastClockUpdate = now;
+
+  // indicador de controle conectado (canto superior esquerdo)
+  tft.fillRect(2, 1, 32, 9, ST77XX_BLACK);
+  if (gamepad && gamepad->isConnected()) {
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+    tft.setCursor(2, 1);
+    tft.print("CTRL");
+  }
 
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
@@ -1442,17 +1454,203 @@ void updateWeatherIfNeeded() {
   }
 }
 
+// ── Controle dos motores (PWM via analogWrite, 0..255) ──────────────────────
+// Cada motor da L298N tem 2 entradas (IN1/IN2 ou IN3/IN4). PWM numa e LOW na
+// outra = anda num sentido; inverte = anda no outro. As duas em 0 = solto;
+// as duas no máx = freio. (Funciona porque os jumpers ENA/ENB ficam colocados.)
+void driveMotor(int in1, int in2, int speed) {
+  speed = constrain(speed, -255, 255);
+  if (speed >= 0) {
+    analogWrite(in1, speed);
+    analogWrite(in2, 0);
+  } else {
+    analogWrite(in1, 0);
+    analogWrite(in2, -speed);
+  }
+}
+
+// left/right: -255 (ré total) .. 0 (parado) .. +255 (frente total)
+void drive(int left, int right) {
+  driveMotor(MOTOR_L_IN1, MOTOR_L_IN2, left);
+  driveMotor(MOTOR_R_IN1, MOTOR_R_IN2, right);
+}
+
+void motorsStop()            { drive(0, 0); }
+void motorsForward(int s)    { drive(s, s); }
+void motorsBackward(int s)   { drive(-s, -s); }
+void motorsTurnLeft(int s)   { drive(-s, s); }   // gira no próprio eixo
+void motorsTurnRight(int s)  { drive(s, -s); }
+
+void motorsBegin() {
+  pinMode(MOTOR_L_IN1, OUTPUT);
+  pinMode(MOTOR_L_IN2, OUTPUT);
+  pinMode(MOTOR_R_IN1, OUTPUT);
+  pinMode(MOTOR_R_IN2, OUTPUT);
+  motorsStop();
+}
+
+// Teste um motor de cada vez: esquerdo p/ frente 2 s, para; depois o direito.
+// Use ~180 (não 255) pra começar devagar e ver se cada roda gira no sentido certo.
+// Se um motor girar ao contrário, troque os DOIS fios dele na ponte (ou os pinos
+// INx no código).
+// Um passo do teste: mostra nome + sentido na tela e aciona os motores.
+void motorsTestStep(const char *nome, uint16_t cor, const char *dir, int left, int right) {
+  tft.fillRect(0, 38, 160, 60, ST77XX_BLACK);
+  centerText(nome, 44, 2, cor);
+  centerText(dir, 72, 2, ST77XX_GREEN);
+  drive(left, right);
+  delay(2500);
+  motorsStop();
+  delay(1000);
+}
+
+void motorsSelfTest() {
+  tft.fillScreen(ST77XX_BLACK);
+  centerText("TESTE MOTORES", 8, 1, ST77XX_WHITE);
+
+  motorsTestStep("ESQUERDO", ST77XX_CYAN,   "frente", 180, 0);
+  motorsTestStep("DIREITO",  ST77XX_YELLOW, "frente", 0, 180);
+  motorsTestStep("OS DOIS",  ST77XX_GREEN,  "frente", 180, 180);
+
+  tft.fillRect(0, 38, 160, 60, ST77XX_BLACK);
+  centerText("FIM DO TESTE", 56, 2, ST77XX_WHITE);
+  delay(1200);
+}
+
+// ── Gamepad (Bluepad32) ─────────────────────────────────────────────────────
+void onGamepadConnected(ControllerPtr ctl) {
+  if (gamepad == nullptr) gamepad = ctl;
+}
+
+void onGamepadDisconnected(ControllerPtr ctl) {
+  if (gamepad == ctl) {
+    gamepad = nullptr;
+    motorsStop();
+  }
+}
+
+// ── Modo Kart: dirige pelo analógico DIREITO; ombros L/R = trim ─────────────
+void drawKartScreen() {
+  tft.fillScreen(ST77XX_BLACK);
+  centerText("MODO KART", 6, 2, ST77XX_GREEN);
+  centerText("analog direito", 28, 1, ST77XX_WHITE);
+  centerText("L / R = trim", 40, 1, ST77XX_CYAN);
+  centerText("B sai", 52, 1, ST77XX_WHITE);
+}
+
+void drawKartStatus() {
+  tft.fillRect(0, 66, 160, 20, ST77XX_BLACK);
+  if (!gamepad || !gamepad->isConnected()) {
+    centerText("pareie o controle", 70, 1, ST77XX_YELLOW);
+    return;
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "TRIM %+d", motorTrim);
+  centerText(buf, 68, 2, ST77XX_WHITE);
+}
+
+void enterKartMode() {
+  kartMode = true;
+  conversationMode = false;
+  motorsStop();
+  drawKartScreen();
+  drawKartStatus();
+}
+
+void exitKartMode() {
+  kartMode = false;
+  motorsStop();
+  showClockScreen();
+}
+
+void updateKartMode() {
+  bool connected = gamepad && gamepad->isConnected() && gamepad->isGamepad();
+  static bool prevConnected = false;
+  if (connected != prevConnected) { drawKartStatus(); prevConnected = connected; }
+  if (!connected) { motorsStop(); return; }
+
+  // botão B sai do modo kart (só na borda de aperto)
+  bool exitNow = gamepad->b();
+  if (exitNow && !prevKartExit) { prevKartExit = exitNow; exitKartMode(); return; }
+  prevKartExit = exitNow;
+
+  // trim com os ombros L / R (só no momento do aperto)
+  bool l = gamepad->l1(), r = gamepad->r1();
+  if (l && !prevTrimL && motorTrim > -TRIM_MAX) { motorTrim--; drawKartStatus(); }
+  if (r && !prevTrimR && motorTrim <  TRIM_MAX) { motorTrim++; drawKartStatus(); }
+  prevTrimL = l; prevTrimR = r;
+
+  // analógico DIREITO: RY = frente/ré (cima = frente), RX = direção
+  int rx = gamepad->axisRX();   // -512 (esq)  .. +511 (dir)
+  int ry = gamepad->axisRY();   // -512 (cima) .. +511 (baixo)
+  int dy = (abs(ry) < KART_DEADZONE) ? 0 : ry;
+  int dx = (abs(rx) < KART_DEADZONE) ? 0 : rx;
+
+  int throttle = map(-dy, -512, 512, -255, 255);
+  int turn     = map(dx,  -512, 512, -255, 255);
+
+  int left  = constrain(throttle + turn, -255, 255);
+  int right = constrain(throttle - turn, -255, 255);
+
+  // trim: corrige se andar torto. +trim tira potência da DIREITA; -trim da ESQUERDA.
+  if (motorTrim > 0) right = right * (TRIM_MAX - motorTrim) / TRIM_MAX;
+  if (motorTrim < 0) left  = left  * (TRIM_MAX + motorTrim) / TRIM_MAX;
+
+  drive(left, right);
+
+  // DIAGNÓSTICO ao vivo (temporário): mostra o que o analógico direito manda.
+  static unsigned long lastDbg = 0;
+  if (millis() - lastDbg > 150) {
+    lastDbg = millis();
+    tft.fillRect(0, 92, 160, 34, ST77XX_BLACK);
+    char buf[28];
+    snprintf(buf, sizeof(buf), "RX %d  RY %d", rx, ry);
+    centerText(buf, 96, 1, ST77XX_WHITE);
+    snprintf(buf, sizeof(buf), "L %d  R %d", left, right);
+    centerText(buf, 110, 1, ST77XX_CYAN);
+  }
+}
+
+// Navegacao do menu pelo controle: analogico ESQUERDO move, A escolhe, B sai.
+void handleGamepadUI() {
+  if (!gamepad || !gamepad->isConnected() || !gamepad->isGamepad()) return;
+
+  bool a = gamepad->a();
+  bool b = gamepad->b();
+  uint8_t dp = gamepad->dpad();     // bits: cima=0x01, baixo=0x02, dir=0x04, esq=0x08
+  int ly = gamepad->axisY();        // analogico esquerdo (vertical)
+  bool navDown = (dp & 0x02) || ly > 300;   // d-pad baixo OU analogico p/ baixo
+  bool navUp   = (dp & 0x01) || ly < -300;  // d-pad cima  OU analogico p/ cima
+
+  if (!conversationMode) {
+    // no relogio: A abre o menu
+    if (a && !prevMenuA && clockMode && !roboEyesFaceMode) enterConversationMode();
+  } else {
+    if (navDown && !prevMenuNavDown) moveConversationOption(1);
+    else if (navUp && !prevMenuNavUp) moveConversationOption(-1);
+    if (a && !prevMenuA) runSelectedConversationOption();
+    else if (b && !prevMenuB) exitConversationMode();
+  }
+
+  prevMenuA = a;
+  prevMenuB = b;
+  prevMenuNavUp = navUp;
+  prevMenuNavDown = navDown;
+}
+
 void setup() {
   Serial.begin(115200);
+  motorsBegin();
+
+  pinMode(TFT_LED_PIN, OUTPUT);
+  applyBrightness();
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(1);
+
   pinMode(STOP_SENSOR_PIN, INPUT_PULLUP);
   pinMode(CONVERSATION_SENSOR_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(TFT_LED_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  applyBrightness();
-
-  tft.initR(INITR_BLACKTAB);
-  tft.setRotation(1);
 
   intro();
   connectWiFiAndTime();
@@ -1466,28 +1664,38 @@ void setup() {
   roboEyes.open();
   snapRoboEyes(HAPPY, DEFAULT);
 
+  // Gamepad Bluetooth (Bluepad32). Pareie segurando SYNC ate os LEDs varrerem.
+  BP32.setup(&onGamepadConnected, &onGamepadDisconnected);
+  BP32.forgetBluetoothKeys();
+  BP32.enableVirtualDevice(false);
+
   eyesOpen = true;
   robotStartTime = millis();
   lastBlinkTime = millis();
+
+  clockMode = true;     // vai direto pro relogio (sem a fase de olhos no inicio)
+  showClockScreen();
 }
 
 void loop() {
+  BP32.update();
   updateBuzzer();
-  checkStopSensor();
 
-  if (!clockMode) {
-    updateRobotAnimation();
-    if (millis() - robotStartTime >= 30000) {
-      clockMode = true;
-      showClockScreen();
-    }
+  if (kartMode) {
+    updateKartMode();
     return;
   }
+
+  checkStopSensor();
+  handleGamepadUI();             // abre/navega o menu pelo controle
 
   if (roboEyesFaceMode) {
     updateRoboEyesFaceMode();
     return;
   }
+
+  checkConversationSensor();     // navega o menu (toque = proximo, segura = escolhe)
+  if (conversationMode) return;  // no menu, nao redesenha o relogio por cima
 
   updateClock();
   updateMiniZappFace();
