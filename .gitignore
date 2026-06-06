@@ -2,6 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 .env
+firmware/ZappClockOnly/wifi_secrets.h
+firmware/ZappClockOnly/backups/
+firmware/ZappClockOnly/*.backup-*
+firmware/*.backup-*
 logs/
 *.log
 *.log.err

@@ -7,8 +7,8 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -180,9 +180,33 @@ def _sketch_check(project) -> dict[str, Any]:
     }
 
 
+def _is_local_request(request: Request) -> bool:
+    """Only auto-fill the browser token for requests from this laptop."""
+    host = request.client.host if request.client else ""
+    return host in {"127.0.0.1", "::1", "testclient"}
+
+
+def _local_token_redirect(request: Request, path: str) -> RedirectResponse | None:
+    """Make the local child-facing pages recover when opened without ?token=... ."""
+    if request.query_params.get("token") or not _is_local_request(request):
+        return None
+    return RedirectResponse(url=f"{path}?token={auth.token}", status_code=307)
+
+
 @app.get("/")
-async def index():
+async def index(request: Request):
+    redirect = _local_token_redirect(request, "/")
+    if redirect:
+        return redirect
     return FileResponse(WEB_ROOT / "index.html")
+
+
+@app.get("/chat")
+async def chat_page(request: Request):
+    redirect = _local_token_redirect(request, "/chat")
+    if redirect:
+        return redirect
+    return FileResponse(WEB_ROOT / "chat.html")
 
 
 @app.get("/api/health")

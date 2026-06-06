@@ -31,6 +31,23 @@ def test_health_is_open_without_token(client):
     assert "hermesConfigured" in body
 
 
+def test_chat_page_is_served(client):
+    res = client.get("/chat")
+    assert res.status_code == 200
+    assert "Rotom Dex IA" in res.text
+    assert "rotom-chat.js" in res.text
+
+
+def test_local_pages_redirect_to_token_when_opened_without_query(client, token):
+    chat_res = client.get("/chat", follow_redirects=False)
+    assert chat_res.status_code == 307
+    assert chat_res.headers["location"] == f"/chat?token={token}"
+
+    index_res = client.get("/", follow_redirects=False)
+    assert index_res.status_code == 307
+    assert index_res.headers["location"] == f"/?token={token}"
+
+
 @pytest.mark.parametrize(
     "method,path,payload",
     [

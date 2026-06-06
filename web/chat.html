@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rotom Dex IA</title>
+  <link rel="stylesheet" href="/static/rotom-chat.css" />
+</head>
+<body>
+  <main class="phone-shell" aria-label="Rotom Dex IA">
+    <header class="topbar">
+      <a id="backLink" class="back" href="/" title="Voltar ao laboratório">‹</a>
+      <div class="rotom-face" aria-hidden="true">⚡</div>
+      <div class="title-block">
+        <h1>Rotom Dex IA</h1>
+        <p id="connectionStatus">conectando…</p>
+      </div>
+      <button id="clearBtn" class="icon-btn" title="Limpar conversa">🧹</button>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite"></section>
+
+    <section id="quickActions" class="quick-actions" aria-label="Ações sugeridas"></section>
+
+    <form id="chatForm" class="composer">
+      <button type="button" id="labBtn" class="icon-btn" title="Abrir laboratório">🧪</button>
+      <textarea id="messageInput" rows="1" placeholder="Mensagem para o Rotom…" autocomplete="off"></textarea>
+      <button id="sendBtn" class="send-btn" type="submit">Enviar</button>
+    </form>
+  </main>
+
+  <script src="/static/rotom-chat.js"></script>
+</body>
+</html>

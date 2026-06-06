@@ -23,6 +23,7 @@ const imageName = document.querySelector('#imageName');
 const imageRemoveBtn = document.querySelector('#imageRemoveBtn');
 const imageAttachBtn = document.querySelector('#imageAttachBtn');
 const imageInput = document.querySelector('#imageInput');
+const webChatBtn = document.querySelector('#webChatBtn');
 
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -808,6 +809,10 @@ if (viewCodeBtn) {
       appendChat('agent', `😅 ${err.message}. ${friendlyHint(err.message)}`);
     }
   };
+}
+
+if (webChatBtn) {
+  webChatBtn.href = TOKEN ? `/chat?token=${encodeURIComponent(TOKEN)}` : '/chat';
 }
 
 if (!TOKEN) {

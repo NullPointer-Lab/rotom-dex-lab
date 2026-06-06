@@ -1,7 +1,9 @@
+import asyncio
+
 import httpx
 import pytest
 
-from bridge.hermes_client import ERROR_REPLY, OFFLINE_REPLY, HermesClient, local_reply_for
+from bridge.hermes_client import ERROR_REPLY, LOCAL_CLI_ERROR_REPLY, OFFLINE_REPLY, HermesClient, local_reply_for
 
 PROHIBITED_LOCAL_REPLY_TERMS = ("modo local", "não converso", "ia completa")
 
@@ -98,5 +100,58 @@ async def test_backend_timeout_falls_back_offline():
 
 def test_configured_property(monkeypatch):
     monkeypatch.delenv("ROTOM_DEX_HERMES_URL", raising=False)
+    monkeypatch.delenv("ROTOM_DEX_HERMES_LOCAL_CLI", raising=False)
     assert HermesClient().configured is False
     assert HermesClient(url="https://x.test").configured is True
+    assert HermesClient(local_cli=True).configured is True
+
+
+@pytest.mark.asyncio
+async def test_local_cli_success_parses_reply_and_allowed_actions(monkeypatch):
+    created = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return (
+                b"session_id: abc\nOi, Davi! Rotom online.\nACTIONS: arduino.compile, shell.exec\n",
+                b"",
+            )
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        created["cmd"] = cmd
+        created["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    client = HermesClient(local_cli=True, hermes_bin="rotom", timeout_seconds=3)
+
+    reply = await client.send_message("oi", {"history": []})
+
+    assert reply.offline is False
+    assert reply.reply == "Oi, Davi! Rotom online."
+    assert [action["type"] for action in reply.suggested_actions] == ["arduino.compile"]
+    assert created["cmd"][:3] == ("rotom", "chat", "-q")
+    assert "--toolsets" in created["cmd"]
+    assert "safe" in created["cmd"]
+
+
+@pytest.mark.asyncio
+async def test_local_cli_failure_is_honest_offline(monkeypatch):
+    class FakeProcess:
+        returncode = 2
+
+        async def communicate(self):
+            return (b"", b"boom")
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    client = HermesClient(local_cli=True, hermes_bin="rotom", timeout_seconds=3)
+
+    reply = await client.send_message("oi", {})
+
+    assert reply.offline is True
+    assert reply.reply == LOCAL_CLI_ERROR_REPLY

@@ -105,6 +105,16 @@ button {
   cursor: pointer;
   margin: .25rem;
 }
+.header-link {
+  display: inline-block;
+  border-radius: 12px;
+  padding: .7rem 1rem;
+  background: linear-gradient(135deg, var(--accent-2), #3a7bd5);
+  color: white;
+  font-weight: 800;
+  text-decoration: none;
+  margin: .25rem;
+}
 button:hover { filter: brightness(1.08); }
 button.danger { background: linear-gradient(135deg, var(--danger), #a62929); }
 .actions { display: flex; flex-wrap: wrap; gap: .25rem; margin: .5rem 0; }
